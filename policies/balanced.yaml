@@ -1,0 +1,31 @@
+# Balanced Policy Configuration
+# Mode is allow: unconfigured non-sensitive actions are allowed by default.
+mode: allow
+
+# SECURITY: DECISION: Mark shell execution and deletion actions as sensitive.
+# WHY: Prevents automated agents from running untrusted shell inputs or deleting files without validation.
+sensitive_actions:
+  - "*__delete_*"
+  - "shell__execute"
+
+servers:
+  filesystem:
+    cmd: "python -m mcp_fs"
+    tools:
+      write_file:
+        action: gate
+        reason: "Modifying filesystem requires approval in balanced mode."
+      read_file: allow
+  shell:
+    cmd: "bash"
+    tools:
+      execute:
+        action: gate
+        reason: "Running shell commands requires human approval in balanced mode."
+
+rules:
+  - id: block_traversal
+    match:
+      arg_regex: '(?:\.\.[/\\])'
+    action: deny
+    reason: "Block path traversal attempts."

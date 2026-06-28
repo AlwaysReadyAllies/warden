@@ -1,0 +1,20 @@
+# Dev Policy Configuration
+# Mode is allow: default allow.
+mode: allow
+
+# SECURITY: DECISION: Minimal restrictions in dev mode to maximize velocity.
+# WHY: For development purposes, prompt warning or gating is not required.
+sensitive_actions: []
+
+servers:
+  filesystem:
+    cmd: "python -m mcp_fs"
+    tools:
+      read_file: allow
+      write_file: allow
+  shell:
+    cmd: "bash"
+    tools:
+      execute: allow
+
+rules: []

@@ -1,0 +1,16 @@
+mode: allow
+servers:
+  filesystem:
+    cmd: ["echo"]
+    tools:
+      read_file: { action: allow }
+      delete_file: { action: deny }
+  payments:
+    url: "http://localhost:9001/mcp"
+    tools:
+      "*": { action: gate }
+sensitive_actions: [transfer, delete]
+rules:
+  - id: shell-danger
+    match: { arg_regex: "rm\\s+-rf" }
+    action: deny

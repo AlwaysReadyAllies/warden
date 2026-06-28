@@ -1,0 +1,37 @@
+# Paranoid Policy Configuration
+# Mode is strict: default deny for all unconfigured actions.
+mode: strict
+
+# SECURITY: DECISION: In paranoid mode, sensitive_actions matches everything (*__*).
+# WHY: Ensures any action that bypasses explicit tool rules is caught by sensitive_actions and gated.
+sensitive_actions:
+  - "*__*"
+
+servers:
+  filesystem:
+    cmd: "python -m mcp_fs"
+    tools:
+      read_file:
+        action: gate
+        reason: "Gated read access in paranoid mode."
+      write_file:
+        action: deny
+        reason: "Writes are strictly blocked in paranoid mode."
+  shell:
+    cmd: "bash"
+    tools:
+      execute:
+        action: deny
+        reason: "Shell command execution is strictly blocked in paranoid mode."
+
+rules:
+  - id: block_traversal
+    match:
+      arg_regex: '(?:\.\.[/\\])'
+    action: deny
+    reason: "Strict block on directory traversal."
+  - id: block_sql_inject
+    match:
+      arg_regex: '(?i)(?:UNION\s+(?:ALL\s+)?SELECT|OR\s+\d+=\d+)'
+    action: deny
+    reason: "Strict block on database manipulation."
