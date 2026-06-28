@@ -104,7 +104,7 @@ class Interceptor:
 
         result_findings: list[GuardFinding] = []
         if self.guard:
-            result, result_findings = self.guard.scan_result(result)
+            result, result_findings = self._guard_result(result)
 
         self.audit.append(
             {
@@ -117,6 +117,29 @@ class Interceptor:
             }
         )
         return result
+
+    def _guard_result(self, result: Any) -> tuple[Any, list[GuardFinding]]:
+        """Run the guard over a tool result, including MCP CallToolResult content objects.
+
+        SECURITY: a downstream returns an mcp.CallToolResult whose payload lives in `.content[i].text`
+        (pydantic objects, not dict/list/str). A live smoke test proved a raw secret in that text reached
+        the model unredacted because the guard only traverses primitives. We extract those text fields,
+        guard them, and write the redacted text back — so redaction holds on the real wire, not just in
+        unit tests. Falls back to scanning the object directly for plain (dict/str) results.
+        """
+        content = getattr(result, "content", None)
+        if isinstance(content, list) and content and all(hasattr(c, "text") for c in content):
+            findings: list[GuardFinding] = []
+            for item in content:
+                if isinstance(getattr(item, "text", None), str):
+                    redacted, f = self.guard.scan_result(item.text)
+                    try:
+                        item.text = redacted
+                    except Exception:  # frozen model: rebuild defensively
+                        pass
+                    findings.extend(f)
+            return result, findings
+        return self.guard.scan_result(result)
 
     def _audit_block(
         self,
