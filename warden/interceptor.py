@@ -19,6 +19,8 @@ SECURITY decisions (justified):
 """
 from __future__ import annotations
 
+import asyncio
+import inspect
 import time
 from typing import Any
 
@@ -60,7 +62,10 @@ class Interceptor:
         self.approval = approval
         self.approver = approver
 
-    def run(self, call: ToolCall, forward: Forwarder) -> Any:
+    async def run(self, call: ToolCall, forward: Forwarder) -> Any:
+        # SECURITY/correctness: async so we AWAIT the downstream call in THIS task and inspect the REAL
+        # result (a sync interceptor only ever saw an un-awaited coroutine — redaction was a no-op and
+        # the await happened in the wrong task, causing anyio cancel-scope errors). Proven by the live smoke.
         started = time.monotonic()
         decision = self.policy.decide(call)
 
@@ -91,16 +96,18 @@ class Interceptor:
             raise Blocked(f"denied by policy: {decision.reason or decision.rule_id or 'rule'}")
 
         if decision.action == Action.GATE:
-            outcome = (
-                self.approval.request(call, decision, arg_findings)
-                if self.approval
-                else ApprovalOutcome.TIMEOUT  # no channel configured => fail closed
-            )
+            if self.approval:
+                # run the (blocking) approval channel off the event loop so it can't stall the proxy
+                outcome = await asyncio.to_thread(self.approval.request, call, decision, arg_findings)
+            else:
+                outcome = ApprovalOutcome.TIMEOUT  # no channel configured => fail closed
             if outcome != ApprovalOutcome.APPROVE:
                 self._audit_block(base, f"gate_{outcome.value}", started, arg_findings, approver=self.approver)
                 raise Blocked(f"blocked: approval {outcome.value}")
 
         result = forward(call)
+        if inspect.isawaitable(result):
+            result = await result
 
         result_findings: list[GuardFinding] = []
         if self.guard:

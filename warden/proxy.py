@@ -94,15 +94,19 @@ async def dispatch(
     if call.tool not in allowed_tools.get(call.server, frozenset()):
         raise ProxySecurityError(f"tool is not permitted: {call.qualified!r}")
 
-    session = sessions[call.server]
-    call_timeout = _timeout_for(call.server, timeout_seconds)
+    orig_server = call.server
+    orig_tool = call.tool
+
+    session = sessions[orig_server]
+    call_timeout = _timeout_for(orig_server, timeout_seconds)
 
     def forward(forwarded: ToolCall) -> Any:
         # SECURITY: The interceptor is not allowed to rewrite the destination
         # server/tool when using this route's forwarder. A policy bug or hostile
         # interceptor result cannot convert approval for one tool into a call to
-        # another tool.
-        if forwarded.server != call.server or forwarded.tool != call.tool:
+        # another tool. We validate against the saved immutable original strings
+        # to prevent in-place mutation bypasses.
+        if forwarded.server != orig_server or forwarded.tool != orig_tool:
             raise ProxySecurityError("forwarder destination rewrite refused")
         # SECURITY: Each downstream call is individually time-bounded so a hung
         # server consumes only this request, not the proxy process or other
@@ -124,6 +128,7 @@ class WardenProxy:
         self.specs = parse_config(config)
         self.server = Server("warden-proxy")
         self._exit_stack = AsyncExitStack()
+        self._exit_stacks: dict[str, AsyncExitStack] = {}
         self._downstreams: dict[str, Downstream] = {}
         self._advertised_tools: list[Tool] = []
         self._started = False
@@ -134,6 +139,7 @@ class WardenProxy:
         if self._started:
             return
         advertised: list[Tool] = []
+        seen_qualified: set[str] = set()
         for spec in self.specs:
             try:
                 downstream = await self._connect_downstream(spec)
@@ -144,7 +150,12 @@ class WardenProxy:
                 # failed server.
                 continue
             self._downstreams[spec.server_id] = downstream
-            advertised.extend(_advertised_tools_for(downstream))
+            for tool in _advertised_tools_for(downstream):
+                # SECURITY: Prevent silent shadowing or collisions across servers.
+                if tool.name in seen_qualified:
+                    raise ProxySecurityError(f"duplicate qualified tool name: {tool.name!r}")
+                seen_qualified.add(tool.name)
+                advertised.append(tool)
         # SECURITY: The advertised list is derived after validation and
         # namespacing. It is not a direct pass-through of downstream tools/list,
         # preventing name shadowing and untrusted metadata propagation.
@@ -152,67 +163,95 @@ class WardenProxy:
         self._started = True
 
     async def close(self) -> None:
+        # SECURITY: Ensure all per-server connection contexts are closed.
+        for stack in list(self._exit_stacks.values()):
+            await stack.aclose()
+        self._exit_stacks.clear()
         await self._exit_stack.aclose()
         self._downstreams.clear()
         self._advertised_tools.clear()
         self._started = False
 
     async def run_stdio(self) -> None:
-        await self.start()
-        async with stdio_server() as (read_stream, write_stream):
-            await self.server.run(read_stream, write_stream, self.server.create_initialization_options())
+        # SECURITY/correctness: downstream sessions are entered into self._exit_stack in start();
+        # they MUST be closed in this same task (the finally) or anyio raises "exit cancel scope in a
+        # different task" at GC and the downstream child processes leak. Enter+serve+close in one task.
+        try:
+            await self.start()
+            async with stdio_server() as (read_stream, write_stream):
+                await self.server.run(read_stream, write_stream, self.server.create_initialization_options())
+        finally:
+            await self.close()
 
     async def _connect_downstream(self, spec: DownstreamSpec) -> Downstream:
-        # SECURITY: Exactly one transport is selected from config. Ambiguous
-        # transport settings are rejected during config parsing so a malicious
-        # config cannot make the proxy connect somewhere other than intended.
-        if spec.command:
-            params = StdioServerParameters(
-                command=spec.command,
-                args=list(spec.args),
-                env=dict(spec.env) if spec.env is not None else None,
-                cwd=spec.cwd,
-            )
-            streams = await asyncio.wait_for(
-                self._exit_stack.enter_async_context(stdio_client(params)),
-                timeout=spec.connect_timeout_seconds,
-            )
-            read_stream, write_stream = streams
-        else:
-            streams = await asyncio.wait_for(
-                self._exit_stack.enter_async_context(
-                    streamablehttp_client(
-                        spec.url or "",
-                        timeout=spec.connect_timeout_seconds,
-                        sse_read_timeout=spec.call_timeout_seconds,
-                    )
-                ),
-                timeout=spec.connect_timeout_seconds,
-            )
-            read_stream, write_stream, _get_session_id = streams
+        # SECURITY: Use a per-server AsyncExitStack to avoid leaking connections
+        # or processes if startup fails before complete initialization.
+        exit_stack = AsyncExitStack()
+        try:
+            # SECURITY: Exactly one transport is selected from config. Ambiguous
+            # transport settings are rejected during config parsing so a malicious
+            # config cannot make the proxy connect somewhere other than intended.
+            if spec.command:
+                params = StdioServerParameters(
+                    command=spec.command,
+                    args=list(spec.args),
+                    env=dict(spec.env) if spec.env is not None else None,
+                    cwd=spec.cwd,
+                )
+                streams = await asyncio.wait_for(
+                    exit_stack.enter_async_context(stdio_client(params)),
+                    timeout=spec.connect_timeout_seconds,
+                )
+                read_stream, write_stream = streams
+            else:
+                streams = await asyncio.wait_for(
+                    exit_stack.enter_async_context(
+                        streamablehttp_client(
+                            spec.url or "",
+                            timeout=spec.connect_timeout_seconds,
+                            sse_read_timeout=spec.call_timeout_seconds,
+                        )
+                    ),
+                    timeout=spec.connect_timeout_seconds,
+                )
+                read_stream, write_stream, _get_session_id = streams
 
-        session = await self._exit_stack.enter_async_context(
-            ClientSession(
-                read_stream,
-                write_stream,
-                read_timeout_seconds=timedelta(seconds=spec.call_timeout_seconds),
+            session = await exit_stack.enter_async_context(
+                ClientSession(
+                    read_stream,
+                    write_stream,
+                    read_timeout_seconds=timedelta(seconds=spec.call_timeout_seconds),
+                )
             )
-        )
-        await asyncio.wait_for(session.initialize(), timeout=spec.connect_timeout_seconds)
-        listed = await asyncio.wait_for(session.list_tools(), timeout=spec.connect_timeout_seconds)
+            await asyncio.wait_for(session.initialize(), timeout=spec.connect_timeout_seconds)
+            listed = await asyncio.wait_for(session.list_tools(), timeout=spec.connect_timeout_seconds)
 
-        tools: dict[str, Tool] = {}
-        for tool in listed.tools:
-            # SECURITY: Downstream tool names are untrusted. We only accept
-            # configured, safe bare names and refuse "__" so upstream namespace
-            # parsing cannot be bypassed.
-            if "*" not in spec.allowed_tools and tool.name not in spec.allowed_tools:
-                continue
-            if not _is_safe_tool_name(tool.name):
-                continue
-            tools[tool.name] = tool
+            # SECURITY: Protect against DoS from a server returning a flood of tools
+            MAX_TOOLS_PER_SERVER = 1000
+            if len(listed.tools) > MAX_TOOLS_PER_SERVER:
+                raise ProxySecurityError(f"downstream server returned too many tools: {len(listed.tools)}")
 
-        return Downstream(spec=spec, session=session, tools=tools)
+            tools: dict[str, Tool] = {}
+            for tool in listed.tools:
+                # SECURITY: Downstream tool names are untrusted. We only accept
+                # configured, safe bare names and refuse "__" so upstream namespace
+                # parsing cannot be bypassed.
+                if "*" not in spec.allowed_tools and tool.name not in spec.allowed_tools:
+                    continue
+                # SECURITY: Validate tool name length and safety
+                if len(tool.name) > 64:
+                    continue
+                if not _is_safe_tool_name(tool.name):
+                    continue
+                # SECURITY: Protect against DoS from massive or recursive schemas
+                _check_schema_limits(tool.inputSchema)
+                tools[tool.name] = tool
+
+            self._exit_stacks[spec.server_id] = exit_stack
+            return Downstream(spec=spec, session=session, tools=tools)
+        except Exception:
+            await exit_stack.aclose()
+            raise
 
     def _install_handlers(self) -> None:
         @self.server.list_tools()
@@ -227,22 +266,37 @@ class WardenProxy:
                 await self.start()
             try:
                 server_id, tool_name = parse_qualified_name(name)
+                # SECURITY: Enforce tool safety at call time.
+                if not _is_safe_tool_name(tool_name):
+                    raise ProxySecurityError(f"unsafe tool name: {tool_name!r}")
+
+                downstream = self._downstreams.get(server_id)
+                if not downstream:
+                    raise ProxySecurityError(f"unknown downstream server: {server_id!r}")
+
+                # SECURITY: Enforce allowed_tools at call time against the config spec.
+                spec = downstream.spec
+                if "*" not in spec.allowed_tools and tool_name not in spec.allowed_tools:
+                    raise ProxySecurityError(f"tool is not permitted by configuration: {name!r}")
+
                 call = ToolCall(server=server_id, tool=tool_name, args=arguments or {})
                 result = await dispatch(
                     call,
-                    {server_id: downstream.session for server_id, downstream in self._downstreams.items()},
+                    {sid: ds.session for sid, ds in self._downstreams.items()},
                     self.interceptor,
                     allowed_tools={
-                        server_id: frozenset(downstream.tools)
-                        for server_id, downstream in self._downstreams.items()
+                        sid: frozenset(ds.tools)
+                        for sid, ds in self._downstreams.items()
                     },
                     timeout_seconds={
-                        server_id: downstream.spec.call_timeout_seconds
-                        for server_id, downstream in self._downstreams.items()
+                        sid: ds.spec.call_timeout_seconds
+                        for sid, ds in self._downstreams.items()
                     },
                 )
                 if inspect.isawaitable(result):
                     result = await result
+                # SECURITY: Limit downstream result size to prevent DoS.
+                _check_result_size(result)
                 return result
             except Exception as exc:
                 return _error_result(str(exc))
@@ -396,6 +450,41 @@ async def _await_with_timeout(awaitable: Any, timeout_seconds: float | None) -> 
 
 def _error_result(message: str) -> CallToolResult:
     return CallToolResult(content=[TextContent(type="text", text=message)], isError=True)
+
+
+def _check_schema_limits(schema: Any, depth: int = 0) -> None:
+    # SECURITY: Prevent deeply nested or large JSON schemas which can cause
+    # exponential parsing/validation times or stack overflow (DoS).
+    MAX_DEPTH = 10
+    MAX_ITEMS = 500
+    if depth > MAX_DEPTH:
+        raise ProxySecurityError("schema depth limit exceeded")
+    if isinstance(schema, dict):
+        if len(schema) > MAX_ITEMS:
+            raise ProxySecurityError("schema size limit exceeded")
+        for k, v in schema.items():
+            if len(str(k)) > 128:
+                raise ProxySecurityError("schema key length limit exceeded")
+            _check_schema_limits(v, depth + 1)
+    elif isinstance(schema, list):
+        if len(schema) > MAX_ITEMS:
+            raise ProxySecurityError("schema size limit exceeded")
+        for item in schema:
+            _check_schema_limits(item, depth + 1)
+
+
+def _check_result_size(result: Any) -> None:
+    # SECURITY: A downstream response might be extremely large (hundreds of MBs),
+    # flooding the proxy's memory or blocking other operations. Limit size to 10MB.
+    MAX_RESULT_SIZE = 10 * 1024 * 1024
+    if not result:
+        return
+    try:
+        size = len(str(result))
+    except Exception:
+        size = 0
+    if size > MAX_RESULT_SIZE:
+        raise ProxySecurityError("downstream result size limit exceeded")
 
 
 __all__ = [
