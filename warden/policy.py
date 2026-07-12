@@ -14,6 +14,13 @@ from warden.config import WardenConfig
 # WHY: Explicit tool rules allow the administrator to override payload rules for specific tools that are known to accept dangerous patterns (e.g., a SQL-admin shell tool). Payload-level rules[] run next to intercept attacks in generic arguments. Sensitive actions are a broad fallback to catch actions not explicitly handled by specific tool rules. Server defaults act as local catch-alls. Global mode is the absolute last-resort fallback.
 # THREAT: Privilege escalation or bypass if general rules could unexpectedly override specific admin-allowed tools, or if permissive modes overrode restricted defaults.
 
+def _contains_match(needle: Any, haystack: str) -> bool:
+    """`contains` may be a single substring or a list of substrings (any-match)."""
+    if isinstance(needle, (list, tuple)):
+        return any(str(n) in haystack for n in needle)
+    return str(needle) in haystack
+
+
 class WardenPolicy:
     def __init__(self, config: WardenConfig):
         self.config = config
@@ -93,6 +100,55 @@ class WardenPolicy:
                 rule_id="fail_closed_exception"
             )
 
+    def decide_result(self, call: ToolCall, result_text: str) -> Optional[Decision]:
+        """Evaluate ``direction: result`` payload rules against a tool RESULT.
+
+        ``decide()`` handles the request; this handles the response side so a rule like
+        ``{match: {direction: result, contains: BEGIN RSA PRIVATE KEY}, action: deny}`` actually
+        fires on returned content. Returns the matched rule's Decision, or None if nothing matched.
+        Fails closed (DENY) on a malformed regex, same as the request path.
+        """
+        try:
+            for rule in self.config.rules:
+                if not isinstance(rule, dict):
+                    continue
+                match_cfg = rule.get("match")
+                if not isinstance(match_cfg, dict):
+                    continue
+                if str(match_cfg.get("direction", "")).lower() != "result":
+                    continue  # only result-direction rules apply here
+                rule_id = rule.get("id", "result_rule")
+
+                matched = True
+                contains_str = match_cfg.get("contains")
+                if contains_str is not None:
+                    matched = _contains_match(contains_str, result_text)
+                regex = match_cfg.get("regex", match_cfg.get("arg_regex"))
+                if matched and regex is not None:
+                    try:
+                        matched = re.search(regex, result_text) is not None
+                    except Exception as e:
+                        return Decision(action=Action.DENY,
+                                        reason=f"Result regex failed on rule '{rule_id}': {e}",
+                                        rule_id=f"result_rule_error:{rule_id}")
+                if contains_str is None and regex is None:
+                    matched = False  # a result rule with no matcher never fires
+
+                if matched:
+                    try:
+                        action_val = Action(rule.get("action", "deny"))
+                    except ValueError:
+                        action_val = Action.DENY
+                    return Decision(action=action_val,
+                                    reason=rule.get("reason", f"Result rule match: {rule_id}"),
+                                    rule_id=rule_id)
+            return None
+        except Exception as e:
+            # fail closed: an engine error on the result path denies the result
+            return Decision(action=Action.DENY,
+                            reason=f"Result policy evaluation failed (fail closed): {e}",
+                            rule_id="result_fail_closed")
+
     def _check_explicit_tool_rule(self, call: ToolCall) -> Optional[Decision]:
         server_cfg = self.config.servers.get(call.server)
         if not server_cfg or not isinstance(server_cfg, dict):
@@ -167,14 +223,10 @@ class WardenPolicy:
                 if str(direction).lower() != "request":
                     matches_all = False
 
-            # Check contains substring in argument values
+            # Check contains substring (or any-of a list) in argument values
             contains_str = match_cfg.get("contains")
             if contains_str is not None and matches_all:
-                found = False
-                for k, v in call.args.items():
-                    if contains_str in str(v):
-                        found = True
-                        break
+                found = any(_contains_match(contains_str, str(v)) for v in call.args.values())
                 if not found:
                     matches_all = False
 

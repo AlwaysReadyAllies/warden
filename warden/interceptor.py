@@ -105,9 +105,40 @@ class Interceptor:
                 self._audit_block(base, f"gate_{outcome.value}", started, arg_findings, approver=self.approver)
                 raise Blocked(f"blocked: approval {outcome.value}")
 
+        # REDACT / REDACT_AND_FLAG proceed like ALLOW but PROMISE the result is redacted. That promise
+        # can only be kept with a guard, so a redact policy with no guard fails closed (never silently
+        # returns un-redacted content the policy said to scrub). REDACT_AND_FLAG additionally raises an
+        # explicit alert flag so a monitored-but-allowed tool is visible in the audit trail.
+        redact_required = decision.action in (Action.REDACT, Action.REDACT_AND_FLAG)
+        if redact_required and self.guard is None:
+            self._audit_block(base, "denied_redact_without_guard", started, arg_findings)
+            raise Blocked("blocked: policy requires redaction but no guard is configured")
+
         result = forward(call)
         if inspect.isawaitable(result):
             result = await result
+
+        policy_flags: list[str] = []
+        if decision.action == Action.REDACT_AND_FLAG:
+            policy_flags.append("policy_redact_and_flag")
+
+        # RESULT-direction policy rules (e.g. deny a result that leaks a private key). Applied here so
+        # `direction: result` rules are actually enforced, not silently ignored.
+        decide_result = getattr(self.policy, "decide_result", None)
+        if decide_result is not None:
+            result_text = self._result_text(result)
+            if result_text is not None:
+                result_decision = decide_result(call, result_text)
+                if result_decision is not None:
+                    policy_flags.append(f"result_rule:{result_decision.rule_id}")
+                    if result_decision.action == Action.DENY:
+                        self._audit_block(base, f"result_denied:{result_decision.rule_id}", started,
+                                          arg_findings)
+                        raise Blocked(
+                            f"blocked: result denied by policy "
+                            f"({result_decision.reason or result_decision.rule_id})")
+                    if result_decision.action in (Action.REDACT, Action.REDACT_AND_FLAG):
+                        redact_required = True  # a result rule can escalate an allowed call to redacted
 
         result_findings: list[GuardFinding] = []
         if self.guard:
@@ -120,10 +151,23 @@ class Interceptor:
                 "result_digest": digest(result),
                 "approver": self.approver if decision.action == Action.GATE else None,
                 "duration_ms": int((time.monotonic() - started) * 1000),
-                "flags": [f.kind for f in arg_findings + result_findings],
+                "flags": [f.kind for f in arg_findings + result_findings] + policy_flags,
             }
         )
         return result
+
+    @staticmethod
+    def _result_text(result: Any) -> str | None:
+        """Best-effort textual view of a tool result for result-direction rule matching."""
+        content = getattr(result, "content", None)
+        if isinstance(content, list) and content and all(hasattr(c, "text") for c in content):
+            return "\n".join(str(getattr(c, "text", "")) for c in content)
+        if isinstance(result, str):
+            return result
+        try:
+            return str(result)
+        except Exception:
+            return None
 
     def _guard_result(self, result: Any) -> tuple[Any, list[GuardFinding]]:
         """Run the guard over a tool result, including MCP CallToolResult content objects.
