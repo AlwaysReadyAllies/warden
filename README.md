@@ -77,12 +77,21 @@ rules:
 
 Starter policies in `policies/`: **paranoid · balanced · dev**.
 
-## Remote deployments: OAuth 2.1 (optional)
+## Remote deployment: HTTP gateway + OAuth 2.1
 
-For the HTTP transport, Warden is an **OAuth 2.1 Resource Server** — it validates bearer tokens per
-the MCP authorization spec: RFC 9728 Protected Resource Metadata, **RFC 8707 audience binding** (a
-token minted for another service is rejected), JWKS signature verification, and scope enforcement.
-Install `pip install warden-mcp[auth]` and add an `auth:` block:
+Run Warden as a deployable HTTP MCP gateway (streamable transport) instead of stdio:
+
+```bash
+pip install "warden-mcp[http,auth]"
+uvx warden-mcp run --http --host 0.0.0.0 --port 8080 --config warden.yaml
+```
+
+With an `auth:` block, Warden is an **OAuth 2.1 Resource Server** — every request to the `/mcp`
+endpoint must carry a valid bearer token or it's rejected **before reaching any tool** with `401` +
+a `WWW-Authenticate` challenge. It validates per the MCP authorization spec: RFC 9728 Protected
+Resource Metadata (served at `/.well-known/oauth-protected-resource`), **RFC 8707 audience binding**
+(a token minted for another service is rejected), JWKS signature verification (asymmetric only — no
+`alg:none`), and scope enforcement.
 
 ```yaml
 auth:
@@ -92,7 +101,8 @@ auth:
   required_scopes: [mcp:call]
 ```
 
-(stdio is a local single-user trust boundary and needs no token.)
+(stdio is a local single-user trust boundary and needs no token; `--http` without an `auth:` block
+serves openly — put it behind your own boundary.)
 
 ## Why it's trustworthy
 
@@ -121,6 +131,7 @@ warden/
   sealing.py      forward-secure sealing + external anchoring (hostile-operator defense)
   pinning.py      TOFU tool-definition pinning (rug-pull defense)
   auth.py         OAuth 2.1 Resource Server — RFC 9728/8707, JWKS, scopes (extra: [auth])
+  http.py         deployable HTTP MCP gateway + bearer-auth middleware (extra: [http])
   approval/       human-in-the-loop (CLI; Telegram next)
 ```
 

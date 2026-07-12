@@ -149,6 +149,10 @@ def test_cli_run_wires_pinstore_and_audit(tmp_path):
         no_pinning = False
         seal_state = None
         anchor = None
+        http = False
+        host = '127.0.0.1'
+        port = 8080
+        mcp_path = '/mcp'
         approval_timeout = 120.0
 
     with patch("warden.proxy.WardenProxy", _FakeProxy):
@@ -175,6 +179,10 @@ def test_cli_run_no_pinning_flag_disables(tmp_path):
         no_pinning = True
         seal_state = None
         anchor = None
+        http = False
+        host = '127.0.0.1'
+        port = 8080
+        mcp_path = '/mcp'
         approval_timeout = 120.0
 
     with patch("warden.proxy.WardenProxy", _FakeProxy):

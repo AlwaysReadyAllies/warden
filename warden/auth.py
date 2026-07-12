@@ -259,8 +259,10 @@ class AuthConfig:
         )
 
     def metadata(self) -> dict[str, Any]:
+        # RFC 9728 requires at least one authorization server; default to the issuer if not listed.
+        servers = list(self.authorization_servers) or ([self.issuer] if self.issuer else [])
         return protected_resource_metadata(
-            self.resource, list(self.authorization_servers),
+            self.resource, servers,
             scopes_supported=list(self.scopes_supported) or None,
         )
 

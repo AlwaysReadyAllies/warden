@@ -78,6 +78,30 @@ def _cmd_run(args) -> int:
     proxy = WardenProxy(_proxy_config(cfg), interceptor, pin_store=pin_store, audit=audit)
     pin_note = "off" if args.no_pinning else args.pins
     seal_note = f" · seal={args.seal_state}" if args.seal_state else ""
+
+    if args.http:
+        from .http import run_http
+        from .auth import AuthConfig
+        auth_cfg = AuthConfig.from_mapping(cfg.auth)
+        validator = None
+        resource_metadata = None
+        if auth_cfg.enabled:
+            validator = auth_cfg.build_validator()      # fetches JWKS from the configured jwks_uri
+            resource_metadata = auth_cfg.metadata()
+            auth_note = f"OAuth 2.1 (resource={auth_cfg.resource})"
+        else:
+            auth_note = "OPEN — no auth configured (put Warden behind your own trust boundary)"
+        sys.stderr.write(
+            f"🛡️  warden HTTP gateway · http://{args.host}:{args.port}{args.mcp_path} · "
+            f"auth={auth_note} · pins={pin_note}{seal_note}\n")
+        try:
+            run_http(proxy, host=args.host, port=args.port,
+                     validator=validator, resource_metadata=resource_metadata, mcp_path=args.mcp_path)
+        finally:
+            if args.seal_state:
+                audit.seal_now()
+        return 0
+
     sys.stderr.write(
         f"🛡️  warden proxy starting · policy={args.config} · audit={args.audit} · pins={pin_note}{seal_note}\n")
     try:
@@ -167,6 +191,11 @@ def main(argv=None) -> int:
     pr.add_argument("--seal-state",
                     help="enable forward-secure sealing using this sealer state (see `warden audit setup-keys`)")
     pr.add_argument("--anchor", help="append signed heads to this off-box anchor file")
+    pr.add_argument("--http", action="store_true",
+                    help="serve over HTTP (streamable-MCP) instead of stdio — a deployable gateway with OAuth")
+    pr.add_argument("--host", default="127.0.0.1", help="HTTP bind host (with --http)")
+    pr.add_argument("--port", type=int, default=8080, help="HTTP bind port (with --http)")
+    pr.add_argument("--mcp-path", default="/mcp", help="HTTP path for the MCP endpoint (with --http)")
     pr.add_argument("--approval-timeout", type=float, default=120.0)
     pr.set_defaults(func=_cmd_run)
 
