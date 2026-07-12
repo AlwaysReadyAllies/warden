@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.verify-venv/
+# runtime state (never commit an operator's audit/pins/seals)
+warden_audit.jsonl
+warden_pins.json
+warden_seal_state.json
+*.seed
+# project-local auto-generated indexes (not part of the product)
+INDEX.md
+**/INDEX.md
+.venv/
