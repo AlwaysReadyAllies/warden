@@ -27,6 +27,24 @@ uvx warden-mcp run --config warden.yaml
 uvx warden-mcp audit verify         # prove the audit log wasn't altered
 ```
 
+Rug-pull defense (TOFU tool-definition pinning) is **on by default** — a downstream tool whose
+definition changes after you first approved it is quarantined until you re-approve it.
+
+### Optional: tamper-evidence against a hostile operator
+
+The plain audit log detects edits-without-rechain. To make tampering detectable even by someone with
+write access to the host, enable **forward-secure sealing** (stdlib, no extra deps):
+
+```bash
+uvx warden-mcp audit setup-keys --out warden.seed   # prints a VERIFICATION SEED — store it OFF-box
+uvx warden-mcp run --seal-state warden_seal_state.json --anchor heads.jsonl
+uvx warden-mcp audit verify --log warden_audit.jsonl --seed warden.seed   # verifies the seals
+```
+
+A record sealed before a compromise cannot be forged or rewritten afterward — the key that sealed it
+is ratcheted forward and destroyed. (Tamper-**evident**, not tamper-proof: deletion is always
+possible, you detect it via the off-box anchored heads.)
+
 Point your client at it (e.g. `.mcp.json` / Claude Desktop / Cursor):
 
 ```json
@@ -59,30 +77,51 @@ rules:
 
 Starter policies in `policies/`: **paranoid · balanced · dev**.
 
+## Remote deployments: OAuth 2.1 (optional)
+
+For the HTTP transport, Warden is an **OAuth 2.1 Resource Server** — it validates bearer tokens per
+the MCP authorization spec: RFC 9728 Protected Resource Metadata, **RFC 8707 audience binding** (a
+token minted for another service is rejected), JWKS signature verification, and scope enforcement.
+Install `pip install warden-mcp[auth]` and add an `auth:` block:
+
+```yaml
+auth:
+  resource: https://warden.example/mcp
+  issuer: https://auth.example/
+  jwks_uri: https://auth.example/.well-known/jwks.json
+  required_scopes: [mcp:call]
+```
+
+(stdio is a local single-user trust boundary and needs no token.)
+
 ## Why it's trustworthy
 
 - **Tamper-evident audit** — hash-chained JSONL; `warden audit verify` detects any edit/insert/delete.
-  Args/results are stored as digests + truncated previews so the log isn't itself a secret store.
-- **Fail closed** — approval timeout, no channel, or any non-yes ⇒ the call is blocked.
+  Add **forward-secure sealing** to catch even a hostile operator who rewrites and re-chains the log.
+- **Rug-pull defense** — TOFU pinning quarantines a tool whose definition changes after approval.
+- **Fail closed** — approval timeout, no channel, redaction-without-a-guard, or any non-yes ⇒ blocked.
 - **Defense in depth** — the guard hard-denies an unambiguously destructive payload (`rm -rf`,
   `mkfs`, `DROP TABLE`) and redacts leaked secrets (provider keys, JWTs, private keys) even when
-  policy says allow.
-- **Untrusted-by-default downstream** — tool metadata is namespaced + validated, never passed through
-  raw; a malicious downstream can't shadow another or inject via tool descriptions. A failing server
-  is isolated, not fatal.
-- **Zero egress** — Warden makes no network calls of its own. It eats its own dog food.
+  policy says allow. `direction: result` rules can deny a response that leaks (e.g. a private key).
+- **Untrusted-by-default downstream** — tool metadata is namespaced + validated + stripped, never
+  passed through raw; a malicious downstream can't shadow another or inject via tool descriptions.
+- **Zero egress** — the core proxy + guard make no network calls of their own. The guard is pure
+  local regex — no LLM in the request path (deterministic, fast, nothing leaves the box).
 
 ## Layout
 
 ```
 warden/
   schemas.py      shared contract (closed-enum decisions, hash-by-default audit)
-  proxy.py        MCP upstream server + downstream clients + namespacing
-  interceptor.py  the policy→audit→approval→guard pipeline
-  policy.py       YAML → allow/deny/gate/redact (with precedence)
+  proxy.py        MCP upstream server + downstream clients + namespacing + pin check
+  interceptor.py  the policy→audit→approval→guard pipeline (+ REDACT + result rules)
+  policy.py       YAML → allow/deny/gate/redact/redact_and_flag (request + result direction)
   guard.py        prompt-injection corpus + secret/PII + shell/SQL/path detection
-  audit.py        hash-chained tamper-evident log + verify
+  audit.py        hash-chained tamper-evident log + verify (+ forward-secure seals)
+  sealing.py      forward-secure sealing + external anchoring (hostile-operator defense)
+  pinning.py      TOFU tool-definition pinning (rug-pull defense)
+  auth.py         OAuth 2.1 Resource Server — RFC 9728/8707, JWKS, scopes (extra: [auth])
   approval/       human-in-the-loop (CLI; Telegram next)
 ```
 
-Apache-2.0 · built by Always Ready Allies LLC.
+Apache-2.0 · built by Always Ready Allies LLC. Security contact: see `SECURITY.md`.

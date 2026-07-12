@@ -43,5 +43,7 @@ Warden makes **no network calls of its own** — detection is local regex/normal
 sees all tool traffic, so it must not become an exfil path itself. (We eat our own dog food.)
 
 ## Reporting a vulnerability
-Email security@alwaysreadyallies.example (placeholder) with a PoC. The injection-pattern corpus in
-`warden/guard.py` is intentionally maintained — new evasions are welcome as issues/PRs.
+Report privately via a GitHub security advisory on this repository, or email
+security@alwaysreadyallies.com, with a proof of concept. Please do not open a public issue for an
+unpatched vulnerability. The injection-pattern corpus in `warden/guard.py` is intentionally
+maintained — new evasion techniques are especially welcome as advisories or PRs.
