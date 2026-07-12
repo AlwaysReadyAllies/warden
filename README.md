@@ -77,6 +77,22 @@ rules:
 
 Starter policies in `policies/`: **paranoid · balanced · dev**.
 
+### Cross-server dataflow: the lethal-trifecta defense
+
+Per-call rules can't see an attack that spans a session — read untrusted content from one server,
+get steered by an injected instruction, exfiltrate via another. Tag the ends and Warden tracks the
+flow: once an untrusted **source** has returned content into the session, any **sink** that can
+exfiltrate is denied (or gated):
+
+```yaml
+flow:
+  on_violation: gate        # gate (ask a human) | deny (default, fail closed)
+  sources: ["web__*", "email__read*"]      # tools whose results are untrusted content
+  sinks:   ["email__send*", "http__post", "slack__*"]   # tools that can send data out
+```
+
+"Untrusted-content-touched context may not reach an exfil-capable tool without a human in the loop."
+
 ## Remote deployment: HTTP gateway + OAuth 2.1
 
 Run Warden as a deployable HTTP MCP gateway (streamable transport) instead of stdio:
@@ -132,6 +148,7 @@ warden/
   pinning.py      TOFU tool-definition pinning (rug-pull defense)
   auth.py         OAuth 2.1 Resource Server — RFC 9728/8707, JWKS, scopes (extra: [auth])
   http.py         deployable HTTP MCP gateway + bearer-auth middleware (extra: [http])
+  flow.py         cross-server dataflow / lethal-trifecta defense (session taint tracking)
   approval/       human-in-the-loop (CLI; Telegram next)
 ```
 

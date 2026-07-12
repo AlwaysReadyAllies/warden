@@ -55,12 +55,15 @@ class Interceptor:
         guard: Guard | None = None,
         approval: ApprovalChannel | None = None,
         approver: str = "operator",
+        flow: Any = None,
     ) -> None:
         self.policy = policy
         self.audit = audit
         self.guard = guard
         self.approval = approval
         self.approver = approver
+        # optional session-scoped cross-server dataflow tracker (lethal-trifecta defense)
+        self.flow = flow
 
     async def run(self, call: ToolCall, forward: Forwarder) -> Any:
         # SECURITY/correctness: async so we AWAIT the downstream call in THIS task and inspect the REAL
@@ -90,6 +93,18 @@ class Interceptor:
                 f"blocked: dangerous argument ({critical_args[0].kind}: {critical_args[0].detail})",
                 critical_args,
             )
+
+        # cross-server dataflow: if untrusted content has entered this session, an exfil-capable
+        # sink is denied/gated (lethal-trifecta defense). Overrides a permissive policy verdict.
+        if self.flow is not None:
+            flow_decision = self.flow.check(call)
+            if flow_decision is not None:
+                if flow_decision.action == Action.DENY:
+                    base["flags"] = base["flags"] + ["flow_taint"]
+                    self._audit_block(base, "flow_denied", started, arg_findings)
+                    raise Blocked(f"blocked: {flow_decision.reason}")
+                # GATE: escalate so the human decides on the tainted exfil
+                decision = flow_decision
 
         if decision.action == Action.DENY:
             self._audit_block(base, "denied", started, arg_findings)
@@ -143,6 +158,10 @@ class Interceptor:
         result_findings: list[GuardFinding] = []
         if self.guard:
             result, result_findings = self._guard_result(result)
+
+        # taint the session AFTER an untrusted source's result has entered the model's context
+        if self.flow is not None and self.flow.observe(call):
+            policy_flags = policy_flags + ["flow_source_tainted"]
 
         self.audit.append(
             {

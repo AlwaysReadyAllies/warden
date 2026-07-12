@@ -27,6 +27,8 @@ class WardenConfig:
     # Optional OAuth 2.1 Resource-Server auth block (consumed by the HTTP transport). Raw mapping here;
     # warden.auth.AuthConfig.from_mapping validates it (and fails closed if enabled-but-incomplete).
     auth: Optional[Dict[str, Any]] = None
+    # Optional cross-server dataflow block (lethal-trifecta defense): {sources, sinks, on_violation}.
+    flow: Optional[Dict[str, Any]] = None
 
     def __post_init__(self) -> None:
         # Validate mode
@@ -74,6 +76,7 @@ def load_config(path: str) -> WardenConfig:
                 rules=data.get("rules", []),
                 sensitive_actions=data.get("sensitive_actions", []),
                 auth=data.get("auth"),
+                flow=data.get("flow"),
             )
     except Exception:
         # SECURITY: DECISION: Any parsing exception defaults to a strict config to fail closed.

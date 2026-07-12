@@ -24,6 +24,12 @@ def _build_runtime(config_path: str, audit_path: str, approval_timeout: float,
     cfg = load_config(config_path)
     policy = WardenPolicy(cfg)
     guard = WardenGuard()
+    flow = None
+    if cfg.flow:
+        from .flow import FlowPolicy, FlowTracker
+        fp = FlowPolicy.from_mapping(cfg.flow)
+        if fp.enabled:
+            flow = FlowTracker(fp)
     sealer = anchor = None
     if seal_state:
         from .sealing import ForwardSecureSealer, AnchorSink
@@ -33,7 +39,8 @@ def _build_runtime(config_path: str, audit_path: str, approval_timeout: float,
         anchor = AnchorSink(path=anchor_path) if anchor_path else None
     audit = AuditLog(audit_path, sealer=sealer, anchor=anchor)
     approval = CliApproval(timeout_sec=approval_timeout)
-    interceptor = Interceptor(policy, audit, guard=guard, approval=approval, approver=os.environ.get("USER", "operator"))
+    interceptor = Interceptor(policy, audit, guard=guard, approval=approval,
+                              approver=os.environ.get("USER", "operator"), flow=flow)
     # Return the audit sink too: the proxy records rug-pull quarantines to the SAME hash-chained log,
     # and we seal it on shutdown when forward-secure sealing is enabled.
     return cfg, interceptor, audit
