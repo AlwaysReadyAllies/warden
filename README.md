@@ -120,6 +120,21 @@ auth:
 (stdio is a local single-user trust boundary and needs no token; `--http` without an `auth:` block
 serves openly — put it behind your own boundary.)
 
+### Remote approvals (Telegram)
+
+In headless / `--http` mode there's no terminal, so gated calls would fail closed. Approve them from
+your phone instead — `pip install "warden-mcp[telegram]"` and add:
+
+```yaml
+approval:
+  channel: telegram
+  bot_token_env: WARDEN_TELEGRAM_TOKEN   # token read from the environment, never the file
+  chat_id: "123456789"
+```
+
+Each gated call sends a message with inline **Approve** / **Deny** buttons; timeout or any error
+fails closed.
+
 ## Why it's trustworthy
 
 - **Tamper-evident audit** — hash-chained JSONL; `warden audit verify` detects any edit/insert/delete.
@@ -149,7 +164,7 @@ warden/
   auth.py         OAuth 2.1 Resource Server — RFC 9728/8707, JWKS, scopes (extra: [auth])
   http.py         deployable HTTP MCP gateway + bearer-auth middleware (extra: [http])
   flow.py         cross-server dataflow / lethal-trifecta defense (session taint tracking)
-  approval/       human-in-the-loop (CLI; Telegram next)
+  approval/       human-in-the-loop — CLI (/dev/tty) + Telegram (headless/remote, extra: [telegram])
 ```
 
 Apache-2.0 · built by Always Ready Allies LLC. Security contact: see `SECURITY.md`.

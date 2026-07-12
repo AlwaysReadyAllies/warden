@@ -38,7 +38,11 @@ def _build_runtime(config_path: str, audit_path: str, approval_timeout: float,
             raise SystemExit(f"seal state {seal_state} not initialised — run `warden audit setup-keys` first")
         anchor = AnchorSink(path=anchor_path) if anchor_path else None
     audit = AuditLog(audit_path, sealer=sealer, anchor=anchor)
+    # approval channel: telegram (works headless / in --http mode) or the default CLI (/dev/tty)
     approval = CliApproval(timeout_sec=approval_timeout)
+    if cfg.approval and str(cfg.approval.get("channel", "cli")).lower() == "telegram":
+        from .approval.telegram import TelegramApproval
+        approval = TelegramApproval.from_config(cfg.approval, timeout_sec=approval_timeout)
     interceptor = Interceptor(policy, audit, guard=guard, approval=approval,
                               approver=os.environ.get("USER", "operator"), flow=flow)
     # Return the audit sink too: the proxy records rug-pull quarantines to the SAME hash-chained log,

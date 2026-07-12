@@ -29,6 +29,8 @@ class WardenConfig:
     auth: Optional[Dict[str, Any]] = None
     # Optional cross-server dataflow block (lethal-trifecta defense): {sources, sinks, on_violation}.
     flow: Optional[Dict[str, Any]] = None
+    # Optional approval channel: {channel: cli|telegram, ...}. Absent ⇒ CLI (/dev/tty).
+    approval: Optional[Dict[str, Any]] = None
 
     def __post_init__(self) -> None:
         # Validate mode
@@ -77,6 +79,7 @@ def load_config(path: str) -> WardenConfig:
                 sensitive_actions=data.get("sensitive_actions", []),
                 auth=data.get("auth"),
                 flow=data.get("flow"),
+                approval=data.get("approval"),
             )
     except Exception:
         # SECURITY: DECISION: Any parsing exception defaults to a strict config to fail closed.
