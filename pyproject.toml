@@ -17,6 +17,9 @@ warden = "warden.__main__:main"
 
 [project.optional-dependencies]
 telegram = ["httpx>=0.27"]
+# OAuth 2.1 Resource-Server auth for the HTTP transport (RFC 9728 / RFC 8707 / JWKS validation).
+# Optional so the core stdio proxy runs with zero crypto deps; forward-secure audit sealing needs none.
+auth = ["pyjwt[crypto]>=2.8", "httpx>=0.27"]
 
 [build-system]
 requires = ["hatchling"]

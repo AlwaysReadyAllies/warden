@@ -24,6 +24,9 @@ class WardenConfig:
     servers: Dict[str, Any] = field(default_factory=dict)
     rules: List[Dict[str, Any]] = field(default_factory=list)
     sensitive_actions: List[str] = field(default_factory=list)
+    # Optional OAuth 2.1 Resource-Server auth block (consumed by the HTTP transport). Raw mapping here;
+    # warden.auth.AuthConfig.from_mapping validates it (and fails closed if enabled-but-incomplete).
+    auth: Optional[Dict[str, Any]] = None
 
     def __post_init__(self) -> None:
         # Validate mode
@@ -69,7 +72,8 @@ def load_config(path: str) -> WardenConfig:
                 mode=data.get("mode", "strict"),
                 servers=data.get("servers", {}),
                 rules=data.get("rules", []),
-                sensitive_actions=data.get("sensitive_actions", [])
+                sensitive_actions=data.get("sensitive_actions", []),
+                auth=data.get("auth"),
             )
     except Exception:
         # SECURITY: DECISION: Any parsing exception defaults to a strict config to fail closed.
