@@ -122,9 +122,21 @@ async def dispatch(
 class WardenProxy:
     """MCP upstream server plus downstream MCP clients."""
 
-    def __init__(self, config: Mapping[str, Any], interceptor: Any):
+    def __init__(
+        self,
+        config: Mapping[str, Any],
+        interceptor: Any,
+        pin_store: Any = None,
+        audit: Any = None,
+    ):
         self.config = config
         self.interceptor = interceptor
+        # SECURITY: optional TOFU tool-definition pinning (rug-pull defense). When a pin store is
+        # supplied, a downstream tool whose definition changed since it was first seen is quarantined
+        # (dropped from the advertised + routable set) until an operator re-approves it. Optional so
+        # existing embeddings that construct WardenProxy(config, interceptor) are unchanged.
+        self._pin_store = pin_store
+        self._audit = audit
         self.specs = parse_config(config)
         self.server = Server("warden-proxy")
         self._exit_stack = AsyncExitStack()
@@ -246,6 +258,24 @@ class WardenProxy:
                 # SECURITY: Protect against DoS from massive or recursive schemas
                 _check_schema_limits(tool.inputSchema)
                 tools[tool.name] = tool
+
+            # SECURITY: TOFU rug-pull check. A tool whose definition (name/description/inputSchema)
+            # changed since first sight is a rug pull; quarantine it — drop from `tools` so it is
+            # neither advertised (`_advertised_tools_for` iterates `downstream.tools`) nor routable
+            # (`dispatch` allow-lists from `frozenset(ds.tools)`). Fail closed: the changed tool is
+            # removed, not passed through.
+            if self._pin_store is not None:
+                pin_result = self._pin_store.reconcile(spec.server_id, tools)
+                for name in pin_result.quarantine:
+                    tools.pop(name, None)
+                    if self._audit is not None:
+                        self._audit.append({
+                            "phase": "pin",
+                            "server": spec.server_id,
+                            "tool": name,
+                            "decision": "quarantined_rug_pull",
+                            "flags": ["tool_definition_changed"],
+                        })
 
             self._exit_stacks[spec.server_id] = exit_stack
             return Downstream(spec=spec, session=session, tools=tools)
