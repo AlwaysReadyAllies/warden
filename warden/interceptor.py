@@ -58,6 +58,7 @@ class Interceptor:
         flow: Any = None,
         boundaries: Any = None,
         arg_constraints: Any = None,
+        postconditions: Any = None,
     ) -> None:
         self.policy = policy
         self.audit = audit
@@ -70,6 +71,8 @@ class Interceptor:
         self.boundaries = boundaries
         # optional per-tool typed argument constraints
         self.arg_constraints = arg_constraints
+        # optional per-tool result postconditions (Verify-Then-Commit invariants)
+        self.postconditions = postconditions
 
     async def run(self, call: ToolCall, forward: Forwarder) -> Any:
         # SECURITY/correctness: async so we AWAIT the downstream call in THIS task and inspect the REAL
@@ -178,6 +181,18 @@ class Interceptor:
                             f"({result_decision.reason or result_decision.rule_id})")
                     if result_decision.action in (Action.REDACT, Action.REDACT_AND_FLAG):
                         redact_required = True  # a result rule can escalate an allowed call to redacted
+
+        # POSTCONDITIONS (Verify-Then-Commit): a tool's declared result invariant must hold. Unlike a
+        # result GUARD ("did the server return something dangerous?"), a postcondition asserts the
+        # intended state ("$.status == created"). A violation is surfaced as a failure, not silently
+        # returned — the side effect may have happened, but Warden refuses to certify an unverified outcome.
+        if self.postconditions is not None and getattr(self.postconditions, "active", False):
+            pc_text = self._result_text(result)
+            if pc_text is not None:
+                pc_reason = self.postconditions.check(call, pc_text)
+                if pc_reason is not None:
+                    self._audit_block(base, f"postcondition_failed:{pc_reason}", started, arg_findings)
+                    raise Blocked(f"blocked: {pc_reason}")
 
         result_findings: list[GuardFinding] = []
         if self.guard:
