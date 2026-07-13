@@ -139,6 +139,21 @@ approval:
 Each gated call sends a message with inline **Approve** / **Deny** buttons; timeout or any error
 fails closed.
 
+## `mcp-scan` — audit a server before you trust it
+
+Warden guards tool calls at runtime; `mcp-scan` is the static, pre-install companion. Point it at an
+MCP server and it inspects every tool **definition** for tool-poisoning / prompt-injection hidden in
+descriptions, secrets in schemas, dangerous capabilities, and the **lethal-trifecta combination** (a
+server that can both read untrusted content *and* exfiltrate). Exits non-zero on risk, so it gates CI.
+
+```bash
+mcp-scan --command npx --arg -y --arg @some/mcp-server   # or --url https://…/mcp, or --config .mcp.json
+warden scan --config .mcp.json --json                    # same, as a warden subcommand
+```
+
+It reuses Warden's own guard corpus, pin fingerprints, and dataflow taxonomy — the static half of the
+same engine. (Fills the gap left when Invariant's `mcp-scan` was acquired and closed.)
+
 ## Why it's trustworthy
 
 - **Tamper-evident audit** — hash-chained JSONL; `warden audit verify` detects any edit/insert/delete.
@@ -168,6 +183,8 @@ warden/
   auth.py         OAuth 2.1 Resource Server — RFC 9728/8707, JWKS, scopes (extra: [auth])
   http.py         deployable HTTP MCP gateway + bearer-auth middleware (extra: [http])
   flow.py         cross-server dataflow / lethal-trifecta defense (session taint tracking)
+  scan.py         mcp-scan — static pre-install risk audit of an MCP server's tools
+  scan_cli.py     the `mcp-scan` console script + `warden scan` subcommand
   approval/       human-in-the-loop — CLI (/dev/tty) + Telegram (headless/remote, extra: [telegram])
 ```
 

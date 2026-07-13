@@ -215,6 +215,13 @@ def main(argv=None) -> int:
     pi.add_argument("--force", action="store_true")
     pi.set_defaults(func=_cmd_init)
 
+    ps = sub.add_parser("scan", help="audit an MCP server's tools for risk before you trust it (mcp-scan)")
+    ps.add_argument("--command"); ps.add_argument("--arg", action="append", default=[], dest="args")
+    ps.add_argument("--url"); ps.add_argument("--config"); ps.add_argument("--name", default="server")
+    ps.add_argument("--json", action="store_true")
+    ps.set_defaults(func=lambda a: __import__("warden.scan_cli", fromlist=["run"]).run(
+        command=a.command, args=a.args, url=a.url, config=a.config, name=a.name, json_out=a.json))
+
     pa = sub.add_parser("audit", help="audit log tools")
     asub = pa.add_subparsers(dest="audit_cmd", required=True)
     pav = asub.add_parser("verify", help="verify the tamper-evident chain (+ seals with --seed)")

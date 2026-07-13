@@ -15,6 +15,7 @@ dependencies = [
 [project.scripts]
 warden = "warden.__main__:main"
 warden-mcp = "warden.__main__:main"
+mcp-scan = "warden.scan_cli:main"
 
 [project.optional-dependencies]
 telegram = ["httpx>=0.27"]
