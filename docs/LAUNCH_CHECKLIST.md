@@ -17,12 +17,13 @@ PyPI is live (`warden-mcp` 0.1.1), the `uvx` one-liner is verified working, repo
 
 ## 3. Registry listings (each is a submission form or a PR — links go live once public)
 
-**awesome-mcp-servers** (github.com/punkpeye/awesome-mcp-servers or wong2/awesome-mcp-servers):
-fork → add under the **Security** section → PR. Entry:
+**awesome-mcp-servers** (github.com/**punkpeye**/awesome-mcp-servers — 90k★, canonical):
+fork → add under the **🔒 Security** section → PR. Verified entry format (`owner/repo` link text,
+`🐍`=Python `🏠`=self-hosted, matches the list's legend):
 ```markdown
-- [Warden](https://github.com/AlwaysReadyAllies/warden) 🐍 🏠 - Drop-in MCP security proxy: policy, tamper-evident audit, human approval, prompt-injection & secret-exfil defense. One line of config, zero code.
+- [AlwaysReadyAllies/warden](https://github.com/AlwaysReadyAllies/warden) 🐍 🏠 - Drop-in MCP security proxy: policy, tamper-evident audit, human approval, prompt-injection & secret-exfil defense. One line of config, zero code.
 ```
-(🐍 = Python, 🏠 = local/self-hosted — match the list's legend.)
+(90k★ upstream = slow review; also submit to wong2/awesome-mcp-servers and mcp.so for faster listing.)
 
 **mcp.so** — submit at mcp.so/submit. Name: Warden · Category: Security ·
 Tagline: "Drop-in security middleware for MCP — audit, policy, human-approval, injection defense." ·
