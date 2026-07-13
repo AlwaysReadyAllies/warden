@@ -181,6 +181,30 @@ def _cmd_capabilities(args) -> int:
     return 0
 
 
+def _cmd_report(args) -> int:
+    from .config import load_config
+    from . import report as report_mod
+    cfg = load_config(args.config)
+    try:
+        tools = asyncio.run(_enumerate_tools(cfg))
+    except Exception as exc:  # a report must still render if a downstream server can't be launched
+        sys.stderr.write(f"⚠ could not enumerate live tools ({exc}); reporting config-only\n")
+        tools = []
+    records = None
+    chain = None
+    if args.audit and os.path.exists(args.audit):
+        records = report_mod.load_audit_records(args.audit)
+        chain = AuditLog(args.audit).verify()
+    rep = report_mod.build_report(cfg, tools, records, chain)
+    if args.html:
+        with open(args.html, "w", encoding="utf-8") as fh:
+            fh.write(report_mod.render_html(rep))
+        sys.stderr.write(f"📄 posture report → {args.html}\n")
+    if args.json or not args.html:
+        print(json.dumps(rep, indent=2))
+    return 0
+
+
 def _cmd_init(args) -> int:
     target = args.path
     if os.path.exists(target) and not args.force:
@@ -277,6 +301,13 @@ def main(argv=None) -> int:
     pc.add_argument("--check", help="fail (exit 2) if capabilities expanded vs this baseline file")
     pc.add_argument("--json", action="store_true")
     pc.set_defaults(func=_cmd_capabilities)
+
+    prep = sub.add_parser("report", help="render a governance-posture + audit evidence report (HTML/JSON)")
+    prep.add_argument("--config", default="warden.yaml")
+    prep.add_argument("--audit", default="warden_audit.jsonl", help="audit log to summarise (optional)")
+    prep.add_argument("--html", help="write a self-contained HTML report to this path")
+    prep.add_argument("--json", action="store_true", help="also print the JSON report")
+    prep.set_defaults(func=_cmd_report)
 
     ps = sub.add_parser("scan", help="audit an MCP server's tools for risk before you trust it (mcp-scan)")
     ps.add_argument("--command"); ps.add_argument("--arg", action="append", default=[], dest="args")
