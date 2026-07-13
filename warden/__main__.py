@@ -17,20 +17,10 @@ from .audit import AuditLog
 def _build_runtime(config_path: str, audit_path: str, approval_timeout: float,
                    seal_state: str | None = None, anchor_path: str | None = None):
     from .config import load_config
-    from .policy import WardenPolicy
-    from .guard import WardenGuard
-    from .interceptor import Interceptor
+    from .runtime import build_interceptor
     from .approval.cli import CliApproval
 
     cfg = load_config(config_path)
-    policy = WardenPolicy(cfg)
-    guard = WardenGuard()
-    flow = None
-    if cfg.flow:
-        from .flow import FlowPolicy, FlowTracker
-        fp = FlowPolicy.from_mapping(cfg.flow)
-        if fp.enabled:
-            flow = FlowTracker(fp)
     sealer = anchor = None
     if seal_state:
         from .sealing import ForwardSecureSealer, AnchorSink
@@ -44,21 +34,8 @@ def _build_runtime(config_path: str, audit_path: str, approval_timeout: float,
     if cfg.approval and str(cfg.approval.get("channel", "cli")).lower() == "telegram":
         from .approval.telegram import TelegramApproval
         approval = TelegramApproval.from_config(cfg.approval, timeout_sec=approval_timeout)
-    boundaries = None
-    if cfg.constraints:
-        from .boundaries import Boundaries
-        b = Boundaries.from_mapping(cfg.constraints)
-        boundaries = b if b.active else None
-    from .argconstraints import ArgumentConstraints
-    ac = ArgumentConstraints(cfg.servers or {})
-    arg_constraints = ac if ac.active else None
-    from .postconditions import Postconditions
-    pc = Postconditions(cfg.servers or {})
-    postconditions = pc if pc.active else None
-    interceptor = Interceptor(policy, audit, guard=guard, approval=approval,
-                              approver=os.environ.get("USER", "operator"), flow=flow,
-                              boundaries=boundaries, arg_constraints=arg_constraints,
-                              postconditions=postconditions)
+    interceptor = build_interceptor(cfg, audit, approval=approval,
+                                    approver=os.environ.get("USER", "operator"))
     # Return the audit sink too: the proxy records rug-pull quarantines to the SAME hash-chained log,
     # and we seal it on shutdown when forward-secure sealing is enabled.
     return cfg, interceptor, audit
@@ -205,6 +182,22 @@ def _cmd_report(args) -> int:
     return 0
 
 
+def _cmd_prove(args) -> int:
+    from .config import load_config
+    from . import effectiveness
+    cfg = load_config(args.config)
+    rep = effectiveness.run_effectiveness(cfg)
+    if args.html:
+        with open(args.html, "w", encoding="utf-8") as fh:
+            fh.write(effectiveness.render_html(rep))
+        sys.stderr.write(f"🛡️  control-effectiveness proof → {args.html}\n")
+    if args.json or not args.html:
+        print(json.dumps(rep, indent=2))
+    sys.stderr.write(f"{rep['held']}/{rep['total']} attacks blocked ({rep['coverage_pct']}%); "
+                     f"{rep['leaked']} leaked\n")
+    return 2 if rep["leaked"] else 0  # a leak fails the build
+
+
 def _cmd_init(args) -> int:
     target = args.path
     if os.path.exists(target) and not args.force:
@@ -308,6 +301,12 @@ def main(argv=None) -> int:
     prep.add_argument("--html", help="write a self-contained HTML report to this path")
     prep.add_argument("--json", action="store_true", help="also print the JSON report")
     prep.set_defaults(func=_cmd_report)
+
+    ppv = sub.add_parser("prove", help="run the control-effectiveness proof: attack the config and record what held")
+    ppv.add_argument("--config", default="warden.yaml")
+    ppv.add_argument("--html", help="write a self-contained proof report to this path")
+    ppv.add_argument("--json", action="store_true", help="also print the JSON report")
+    ppv.set_defaults(func=_cmd_prove)
 
     ps = sub.add_parser("scan", help="audit an MCP server's tools for risk before you trust it (mcp-scan)")
     ps.add_argument("--command"); ps.add_argument("--arg", action="append", default=[], dest="args")
