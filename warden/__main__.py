@@ -49,8 +49,12 @@ def _build_runtime(config_path: str, audit_path: str, approval_timeout: float,
         from .boundaries import Boundaries
         b = Boundaries.from_mapping(cfg.constraints)
         boundaries = b if b.active else None
+    from .argconstraints import ArgumentConstraints
+    ac = ArgumentConstraints(cfg.servers or {})
+    arg_constraints = ac if ac.active else None
     interceptor = Interceptor(policy, audit, guard=guard, approval=approval,
-                              approver=os.environ.get("USER", "operator"), flow=flow, boundaries=boundaries)
+                              approver=os.environ.get("USER", "operator"), flow=flow,
+                              boundaries=boundaries, arg_constraints=arg_constraints)
     # Return the audit sink too: the proxy records rug-pull quarantines to the SAME hash-chained log,
     # and we seal it on shutdown when forward-secure sealing is enabled.
     return cfg, interceptor, audit

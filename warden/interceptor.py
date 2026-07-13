@@ -57,6 +57,7 @@ class Interceptor:
         approver: str = "operator",
         flow: Any = None,
         boundaries: Any = None,
+        arg_constraints: Any = None,
     ) -> None:
         self.policy = policy
         self.audit = audit
@@ -67,6 +68,8 @@ class Interceptor:
         self.flow = flow
         # optional resource-scoped authorization (destination/filesystem boundaries)
         self.boundaries = boundaries
+        # optional per-tool typed argument constraints
+        self.arg_constraints = arg_constraints
 
     async def run(self, call: ToolCall, forward: Forwarder) -> Any:
         # SECURITY/correctness: async so we AWAIT the downstream call in THIS task and inspect the REAL
@@ -96,6 +99,15 @@ class Interceptor:
                 f"blocked: dangerous argument ({critical_args[0].kind}: {critical_args[0].detail})",
                 critical_args,
             )
+
+        # typed argument constraints: a call whose args violate the tool's declared constraints is
+        # denied outright (fail closed) — an amount over the cap, a branch off-prefix, a forced flag.
+        if self.arg_constraints is not None:
+            violation = self.arg_constraints.check(call)
+            if violation:
+                base["flags"] = base["flags"] + ["arg_constraint_violation"]
+                self._audit_block(base, "arg_constraint_denied", started, arg_findings)
+                raise Blocked(f"blocked: {violation}")
 
         # resource-scoped authorization: a destination/path argument outside the configured boundaries
         # is denied outright (fail closed), regardless of a permissive policy verdict.
