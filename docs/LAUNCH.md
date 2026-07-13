@@ -47,7 +47,7 @@ uvx warden-mcp init && uvx warden-mcp run
 > What it does:
 > - **Policy** (`warden.yaml`): allow / deny / gate / redact per tool, with precedence + glob/regex rules.
 >   Denied tools aren't even advertised (least privilege).
-> - **Human-in-the-loop**: dangerous actions block for approval (CLI now, Telegram next), fail-closed on
+> - **Human-in-the-loop**: dangerous actions block for approval (CLI or Telegram), fail-closed on
 >   timeout.
 > - **Guard**: strips prompt-injection from tool *results* (normalizes unicode + decodes base64/hex/url
 >   first, so the obvious evasions don't work) and redacts leaked secrets (provider keys, JWTs, private
@@ -61,7 +61,7 @@ uvx warden-mcp init && uvx warden-mcp run
 > rewrite the whole file needs head-hash anchoring (operational) or signed records (v2 roadmap). The
 > injection corpus is ongoing work — that's the part I most want adversarial eyes on.
 >
-> Try it: `uvx warden-mcp init && python -m warden run`, or run `examples/hero_demo.py` to watch it block
+> Try it: `uvx warden-mcp init && uvx warden-mcp run`, or run `examples/hero_demo.py` to watch it block
 > a destructive call, redact a leaked key, and catch a forged audit record. Apache-2.0. Feedback / new
 > injection bypasses very welcome.
 
