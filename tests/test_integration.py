@@ -16,7 +16,7 @@ HERE = os.path.dirname(__file__)
 def _ic(approval=None):
     cfg = load_config(os.path.join(HERE, "fixture_policy.yaml"))
     log = AuditLog(tempfile.mktemp(suffix=".jsonl"))
-    return Interceptor(WardenPolicy(cfg), log, guard=WardenGuard(), approval=approval, approver="croft"), log
+    return Interceptor(WardenPolicy(cfg), log, guard=WardenGuard(), approval=approval, approver="operator"), log
 
 
 class _AutoApprove:
