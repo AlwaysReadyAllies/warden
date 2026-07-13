@@ -216,11 +216,22 @@ class WardenPolicy:
                 continue
             
             matches_all = True
-            
+
             # Check direction (decide() only processes REQUEST direction)
             direction = match_cfg.get("direction")
             if direction is not None:
                 if str(direction).lower() != "request":
+                    matches_all = False
+
+            # Check capability (any-of): the rule matches if the tool's capability set intersects the
+            # listed capabilities — so one rule governs WHAT a tool can do (e.g. capability:[DELETE,
+            # FINANCIAL,ADMIN] → deny) without naming each tool. Case-insensitive.
+            cap_match = match_cfg.get("capability")
+            if cap_match is not None and matches_all:
+                wanted = {cap_match} if isinstance(cap_match, str) else set(cap_match)
+                wanted = {str(c).upper() for c in wanted}
+                have = {str(c).upper() for c in (call.capabilities or ())}
+                if not (wanted & have):
                     matches_all = False
 
             # Check contains substring (or any-of a list) in argument values

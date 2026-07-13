@@ -38,6 +38,10 @@ class ToolCall:
     server: str                       # downstream server id (e.g. "filesystem")
     tool: str                         # bare tool name (e.g. "write_file")
     args: dict[str, Any] = field(default_factory=dict)
+    # deterministic capability set of the target tool (READ/WRITE/DELETE/EXECUTE/NETWORK/CREDENTIAL/
+    # FINANCIAL/ADMIN/UNKNOWN), classified from its schema — lets policy match on WHAT a tool can do,
+    # not just its name. Populated by the proxy at call time; empty when unknown.
+    capabilities: frozenset[str] = field(default_factory=frozenset)
 
     @property
     def qualified(self) -> str:       # the namespaced name exposed upstream

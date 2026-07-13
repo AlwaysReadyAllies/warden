@@ -309,7 +309,11 @@ class WardenProxy:
                 if "*" not in spec.allowed_tools and tool_name not in spec.allowed_tools:
                     raise ProxySecurityError(f"tool is not permitted by configuration: {name!r}")
 
-                call = ToolCall(server=server_id, tool=tool_name, args=arguments or {})
+                # classify the target tool so policy can decide on WHAT it can do, not just its name
+                from .capabilities import caps_to_list, classify_tool
+                tool_obj = downstream.tools.get(tool_name)
+                caps = frozenset(caps_to_list(classify_tool(tool_obj))) if tool_obj is not None else frozenset()
+                call = ToolCall(server=server_id, tool=tool_name, args=arguments or {}, capabilities=caps)
                 result = await dispatch(
                     call,
                     {sid: ds.session for sid, ds in self._downstreams.items()},
