@@ -1,5 +1,9 @@
 # 🛡️ Warden
 
+[![PyPI](https://img.shields.io/pypi/v/warden-mcp?color=2d7)](https://pypi.org/project/warden-mcp/)
+[![Python](https://img.shields.io/pypi/pyversions/warden-mcp)](https://pypi.org/project/warden-mcp/)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+
 **Drop-in security middleware for MCP.** Point your AI client at Warden instead of the raw
 tool-server — one line of config, zero code changes — and every tool call is logged tamper-evidently,
 allowed/denied/gated by policy, held for human approval when it's dangerous, and scanned for
