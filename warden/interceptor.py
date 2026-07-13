@@ -56,6 +56,7 @@ class Interceptor:
         approval: ApprovalChannel | None = None,
         approver: str = "operator",
         flow: Any = None,
+        boundaries: Any = None,
     ) -> None:
         self.policy = policy
         self.audit = audit
@@ -64,6 +65,8 @@ class Interceptor:
         self.approver = approver
         # optional session-scoped cross-server dataflow tracker (lethal-trifecta defense)
         self.flow = flow
+        # optional resource-scoped authorization (destination/filesystem boundaries)
+        self.boundaries = boundaries
 
     async def run(self, call: ToolCall, forward: Forwarder) -> Any:
         # SECURITY/correctness: async so we AWAIT the downstream call in THIS task and inspect the REAL
@@ -93,6 +96,15 @@ class Interceptor:
                 f"blocked: dangerous argument ({critical_args[0].kind}: {critical_args[0].detail})",
                 critical_args,
             )
+
+        # resource-scoped authorization: a destination/path argument outside the configured boundaries
+        # is denied outright (fail closed), regardless of a permissive policy verdict.
+        if self.boundaries is not None:
+            violation = self.boundaries.check(call)
+            if violation:
+                base["flags"] = base["flags"] + ["boundary_violation"]
+                self._audit_block(base, "boundary_denied", started, arg_findings)
+                raise Blocked(f"blocked: {violation}")
 
         # cross-server dataflow: if untrusted content has entered this session, an exfil-capable
         # sink is denied/gated (lethal-trifecta defense). Overrides a permissive policy verdict.

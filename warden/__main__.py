@@ -44,8 +44,13 @@ def _build_runtime(config_path: str, audit_path: str, approval_timeout: float,
     if cfg.approval and str(cfg.approval.get("channel", "cli")).lower() == "telegram":
         from .approval.telegram import TelegramApproval
         approval = TelegramApproval.from_config(cfg.approval, timeout_sec=approval_timeout)
+    boundaries = None
+    if cfg.constraints:
+        from .boundaries import Boundaries
+        b = Boundaries.from_mapping(cfg.constraints)
+        boundaries = b if b.active else None
     interceptor = Interceptor(policy, audit, guard=guard, approval=approval,
-                              approver=os.environ.get("USER", "operator"), flow=flow)
+                              approver=os.environ.get("USER", "operator"), flow=flow, boundaries=boundaries)
     # Return the audit sink too: the proxy records rug-pull quarantines to the SAME hash-chained log,
     # and we seal it on shutdown when forward-secure sealing is enabled.
     return cfg, interceptor, audit

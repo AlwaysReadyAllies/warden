@@ -31,6 +31,8 @@ class WardenConfig:
     flow: Optional[Dict[str, Any]] = None
     # Optional approval channel: {channel: cli|telegram, ...}. Absent ⇒ CLI (/dev/tty).
     approval: Optional[Dict[str, Any]] = None
+    # Optional resource-scoped authorization: {network: {domains: [...]}, filesystem: {roots: [...]}}.
+    constraints: Optional[Dict[str, Any]] = None
 
     def __post_init__(self) -> None:
         # Validate mode
@@ -80,6 +82,7 @@ def load_config(path: str) -> WardenConfig:
                 auth=data.get("auth"),
                 flow=data.get("flow"),
                 approval=data.get("approval"),
+                constraints=data.get("constraints"),
             )
     except Exception:
         # SECURITY: DECISION: Any parsing exception defaults to a strict config to fail closed.
