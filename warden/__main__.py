@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
 import shutil
 import sys
@@ -125,6 +126,48 @@ def _cmd_run(args) -> int:
     return 0
 
 
+async def _enumerate_tools(cfg):
+    """Connect to the configured downstream server(s) and return their advertised Tool objects."""
+    from .proxy import WardenProxy
+
+    class _NullInterceptor:
+        async def run(self, call, forward):
+            return None
+
+    proxy = WardenProxy(_proxy_config(cfg), _NullInterceptor())
+    try:
+        await proxy.start()
+        return [t for ds in proxy._downstreams.values() for t in ds.tools.values()]
+    finally:
+        await proxy.close()
+
+
+def _cmd_capabilities(args) -> int:
+    from .config import load_config
+    from . import capsnapshot
+    cfg = load_config(args.config)
+    tools = asyncio.run(_enumerate_tools(cfg))
+    snap = capsnapshot.snapshot(tools)
+
+    if args.snapshot:
+        capsnapshot.save(args.snapshot, snap)
+        sys.stderr.write(f"📸 capability snapshot ({len(snap['tools'])} tools) → {args.snapshot}\n")
+        return 0
+
+    if args.check:
+        baseline = capsnapshot.load(args.check)
+        expansions = capsnapshot.diff(baseline, snap)
+        sys.stderr.write(capsnapshot.render_diff(baseline, snap) + "\n")
+        return 2 if expansions else 0  # fail the build on expansion
+
+    # default: print the current capability map
+    for name, caps in sorted(snap["tools"].items()):
+        sys.stderr.write(f"  {name}: {', '.join(caps) or 'UNKNOWN'}\n")
+    if args.json:
+        print(json.dumps(snap, indent=2))
+    return 0
+
+
 def _cmd_init(args) -> int:
     target = args.path
     if os.path.exists(target) and not args.force:
@@ -214,6 +257,13 @@ def main(argv=None) -> int:
     pi.add_argument("path", nargs="?", default="warden.yaml")
     pi.add_argument("--force", action="store_true")
     pi.set_defaults(func=_cmd_init)
+
+    pc = sub.add_parser("capabilities", help="classify tool capabilities; snapshot/gate capability expansion in CI")
+    pc.add_argument("--config", default="warden.yaml")
+    pc.add_argument("--snapshot", help="write a capability baseline to this file")
+    pc.add_argument("--check", help="fail (exit 2) if capabilities expanded vs this baseline file")
+    pc.add_argument("--json", action="store_true")
+    pc.set_defaults(func=_cmd_capabilities)
 
     ps = sub.add_parser("scan", help="audit an MCP server's tools for risk before you trust it (mcp-scan)")
     ps.add_argument("--command"); ps.add_argument("--arg", action="append", default=[], dest="args")
