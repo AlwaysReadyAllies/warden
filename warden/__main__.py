@@ -185,8 +185,12 @@ def _cmd_report(args) -> int:
 def _cmd_prove(args) -> int:
     from .config import load_config
     from . import effectiveness
-    cfg = load_config(args.config)
-    rep = effectiveness.run_effectiveness(cfg)
+    if args.live:
+        from . import liveprove
+        rep = liveprove.run_live(args.config, timeout=args.timeout)
+    else:
+        cfg = load_config(args.config)
+        rep = effectiveness.run_effectiveness(cfg)
     if args.html:
         with open(args.html, "w", encoding="utf-8") as fh:
             fh.write(effectiveness.render_html(rep))
@@ -323,6 +327,9 @@ def main(argv=None) -> int:
 
     ppv = sub.add_parser("prove", help="run the control-effectiveness proof: attack the config and record what held")
     ppv.add_argument("--config", default="warden.yaml")
+    ppv.add_argument("--live", action="store_true",
+                     help="attack a REAL downstream server through the real proxy over stdio (end-to-end)")
+    ppv.add_argument("--timeout", type=float, default=30.0, help="per-call timeout for --live (seconds)")
     ppv.add_argument("--html", help="write a self-contained proof report to this path")
     ppv.add_argument("--json", action="store_true", help="also print the JSON report")
     ppv.add_argument("--sign", metavar="AUDIT_LOG",

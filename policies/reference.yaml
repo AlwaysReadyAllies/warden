@@ -1,0 +1,38 @@
+# Reference policy for `warden prove --live`: fronts the deliberately-vulnerable reference target
+# (warden/targets/reference_target.py) with every deterministic control turned on, so the live proof
+# demonstrates Warden blocking real attacks end-to-end over stdio.
+mode: allow
+
+servers:
+  reference:
+    cmd: ["python3", "-m", "warden.targets.reference_target"]
+    tools:
+      fetch_url:      { action: allow }
+      read_file:      { action: allow }
+      run_command:    { action: allow }
+      run_query:      { action: allow }
+      send_message:   { action: allow }
+      transfer_funds:
+        action: allow
+        arguments:
+          amount: { type: number, maximum: 100 }
+        postconditions:
+          - path: "$.status"
+            equals: "completed"
+      delete_record:  { action: allow }
+
+# resource boundaries: the only network destination and filesystem root the tools may touch
+constraints:
+  network:
+    domains: ["api.internal.example"]
+  filesystem:
+    roots: ["/workspace"]
+
+# capability policy: money movement and deletion are denied outright
+rules:
+  - id: deny_financial
+    match: { capability: FINANCIAL }
+    action: deny
+  - id: deny_delete
+    match: { capability: DELETE }
+    action: deny
