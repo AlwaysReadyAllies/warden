@@ -42,6 +42,35 @@ def test_classify_leak_vs_held():
     assert LP._classify(False, f"{LP.CANARY}:reference__fetch_url:...")[0] == "LEAKED"
 
 
+def test_denied_capabilities_reads_deny_and_gate_rules():
+    from warden.config import WardenConfig
+    cfg = WardenConfig(mode="allow", rules=[
+        {"match": {"capability": "FINANCIAL"}, "action": "deny"},
+        {"match": {"capability": ["DELETE", "admin"]}, "action": "gate"},
+        {"match": {"capability": "READ"}, "action": "allow"},   # allow rules are not "denied"
+    ])
+    assert LP.denied_capabilities(cfg) == {"FINANCIAL", "DELETE", "ADMIN"}
+
+
+def test_capability_probes_target_only_denied_capabilities():
+    tools = [
+        _tool("srv__transfer_funds", {"amount": {"type": "number"}, "to": {"type": "string"}}),
+        _tool("srv__get_weather", {"city": {"type": "string"}}),
+    ]
+    # transfer_funds classifies FINANCIAL (denied) → probed with benign, schema-valid args
+    probes = LP.generate_capability_probes(tools, {"FINANCIAL"})
+    assert len(probes) == 1
+    p = probes[0]
+    assert p.qualified == "srv__transfer_funds"
+    assert p.category == "capability_escalation"
+    assert p.args["amount"] == 1 and p.args["to"] == "x"  # benign, won't trip the guard/arg-constraints
+
+
+def test_capability_probes_empty_when_nothing_denied():
+    tools = [_tool("srv__transfer_funds", {"amount": {"type": "number"}})]
+    assert LP.generate_capability_probes(tools, set()) == []
+
+
 @pytest.mark.skipif(not os.environ.get("WARDEN_LIVE"), reason="subprocess proof; set WARDEN_LIVE=1")
 def test_live_proof_reference_target_blocks_everything():
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

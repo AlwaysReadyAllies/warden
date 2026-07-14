@@ -1,17 +1,24 @@
 # Reference policy for `warden prove --live`: fronts the deliberately-vulnerable reference target
-# (warden/targets/reference_target.py) with every deterministic control turned on, so the live proof
-# demonstrates Warden blocking real attacks end-to-end over stdio.
+# (warden/targets/reference_target.py) so the live proof demonstrates Warden blocking real attacks
+# end-to-end over stdio.
+#
+# Least privilege: it exposes ONLY the tools it means to, each with the deterministic controls that
+# defend it. It does NOT expose delete_record at all — the surest control on a dangerous capability is
+# not to advertise it (a capability: DELETE deny would NOT protect an explicitly-allowed tool; a per-tool
+# allow is authoritative over a capability rule by design — see test_explicit_tool_rule_overrides_capability_rule).
 mode: allow
 
 servers:
   reference:
     cmd: ["python3", "-m", "warden.targets.reference_target"]
     tools:
-      fetch_url:      { action: allow }
-      read_file:      { action: allow }
-      run_command:    { action: allow }
-      run_query:      { action: allow }
-      send_message:   { action: allow }
+      # guard catches the injection/egress payloads; boundaries catch SSRF/traversal destinations
+      fetch_url:    { action: allow }
+      read_file:    { action: allow }
+      run_command:  { action: allow }
+      run_query:    { action: allow }
+      send_message: { action: allow }
+      # allowed, but the amount is capped and the outcome must be verified
       transfer_funds:
         action: allow
         arguments:
@@ -19,7 +26,7 @@ servers:
         postconditions:
           - path: "$.status"
             equals: "completed"
-      delete_record:  { action: allow }
+      # delete_record is intentionally NOT listed → the proxy never advertises it → it cannot be called
 
 # resource boundaries: the only network destination and filesystem root the tools may touch
 constraints:
@@ -27,12 +34,3 @@ constraints:
     domains: ["api.internal.example"]
   filesystem:
     roots: ["/workspace"]
-
-# capability policy: money movement and deletion are denied outright
-rules:
-  - id: deny_financial
-    match: { capability: FINANCIAL }
-    action: deny
-  - id: deny_delete
-    match: { capability: DELETE }
-    action: deny

@@ -43,21 +43,75 @@ class LiveAttack:
     param: str
 
 
+def _name(t: Any):
+    return getattr(t, "name", None) or (t.get("name") if isinstance(t, dict) else None)
+
+
+def _schema(t: Any) -> dict:
+    s = getattr(t, "inputSchema", None) or (t.get("inputSchema") if isinstance(t, dict) else None)
+    return s if isinstance(s, dict) else {}
+
+
 def generate_live_attacks(tools: Any) -> list[LiveAttack]:
-    """Derive attacks from live tool schemas by parameter-name heuristics."""
+    """Derive param-injection attacks from live tool schemas by parameter-name heuristics."""
     out: list[LiveAttack] = []
     for t in tools:
-        name = getattr(t, "name", None) or (t.get("name") if isinstance(t, dict) else None)
-        schema = getattr(t, "inputSchema", None) or (t.get("inputSchema") if isinstance(t, dict) else None) or {}
-        props = (schema or {}).get("properties", {}) if isinstance(schema, dict) else {}
+        props = _schema(t).get("properties", {}) or {}
         for param, spec in props.items():
             if isinstance(spec, dict) and spec.get("type") not in (None, "string"):
                 continue  # only inject into string-typed params
             low = param.lower()
             for needles, payload, category, cwe in _PARAM_ATTACKS:
                 if any(n in low for n in needles):
-                    out.append(LiveAttack(name, {param: payload}, category, cwe, param))
+                    out.append(LiveAttack(_name(t), {param: payload}, category, cwe, param))
                     break
+    return out
+
+
+_BENIGN = {"number": 1, "integer": 1, "boolean": False, "array": [], "object": {}}
+
+
+def _benign_args(schema: dict) -> dict:
+    """Innocuous, schema-valid args so a capability probe is blocked (if at all) by POLICY, not the guard."""
+    props = schema.get("properties", {}) or {}
+    args: dict = {}
+    for p, spec in props.items():
+        t = spec.get("type") if isinstance(spec, dict) else "string"
+        args[p] = _BENIGN.get(t, "x")
+    return args
+
+
+def generate_capability_probes(tools: Any, denied_caps: set[str]) -> list[LiveAttack]:
+    """For each capability the config DENIES/GATES, probe live tools carrying it with benign args.
+
+    Only capabilities the operator declared they want stopped are probed — so a legitimately-allowed
+    dangerous tool is never mislabeled a leak. If such a benign call lands, the deny rule failed.
+    """
+    if not denied_caps:
+        return []
+    from .capabilities import classify_tool
+    out: list[LiveAttack] = []
+    for t in tools:
+        name = _name(t)
+        caps = {c.value if hasattr(c, "value") else str(c) for c in classify_tool(t)}
+        hit = caps & denied_caps
+        if hit:
+            out.append(LiveAttack(name, _benign_args(_schema(t)), "capability_escalation",
+                                  "CWE-269", "+".join(sorted(hit))))
+    return out
+
+
+def denied_capabilities(cfg: Any) -> set[str]:
+    """Capabilities the config's rules deny or gate (uppercased)."""
+    out: set[str] = set()
+    for r in (getattr(cfg, "rules", None) or []):
+        if not isinstance(r, dict):
+            continue
+        m = r.get("match")
+        cap = m.get("capability") if isinstance(m, dict) else None
+        if cap and str(r.get("action", "")).lower() in ("deny", "gate"):
+            caps = cap if isinstance(cap, list) else [cap]
+            out.update(str(c).upper() for c in caps)
     return out
 
 
@@ -75,6 +129,9 @@ async def _run(config_path: str, timeout: float) -> dict:
     from mcp.client.stdio import StdioServerParameters, stdio_client
     import asyncio
 
+    from .config import load_config
+    denied = denied_capabilities(load_config(config_path))
+
     pkg_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     env = dict(os.environ, PYTHONPATH=pkg_root)
     params = StdioServerParameters(
@@ -87,7 +144,7 @@ async def _run(config_path: str, timeout: float) -> dict:
         async with ClientSession(read, write) as session:
             await asyncio.wait_for(session.initialize(), timeout=timeout)
             listed = await asyncio.wait_for(session.list_tools(), timeout=timeout)
-            attacks = generate_live_attacks(listed.tools)
+            attacks = generate_live_attacks(listed.tools) + generate_capability_probes(listed.tools, denied)
             for atk in attacks:
                 try:
                     r = await asyncio.wait_for(session.call_tool(atk.qualified, atk.args), timeout=timeout)
