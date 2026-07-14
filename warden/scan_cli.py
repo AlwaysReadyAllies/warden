@@ -43,7 +43,8 @@ def _servers_from_mcp_json(path: str) -> list[tuple[str, dict]]:
     return list(servers.items())
 
 
-def run(*, command=None, args=(), url=None, config=None, name="server", json_out=False) -> int:
+def run(*, command=None, args=(), url=None, config=None, name="server", json_out=False,
+        sarif_out=None) -> int:
     """Scan one server (command/url) or every server in a .mcp.json; return an exit code."""
     reports: list[ScanReport] = []
     if config:
@@ -63,6 +64,11 @@ def run(*, command=None, args=(), url=None, config=None, name="server", json_out
         _print_report(r)
     if json_out:
         print(json.dumps([r.to_dict() for r in reports], indent=2))
+    if sarif_out:
+        from .sarif import reports_to_sarif
+        with open(sarif_out, "w", encoding="utf-8") as fh:
+            json.dump(reports_to_sarif(reports), fh, indent=2)
+        sys.stderr.write(f"  SARIF → {sarif_out}\n")
     # exit non-zero if any scanned server is high/critical — gates CI
     return 1 if any(r.risky for r in reports) else 0
 
@@ -76,8 +82,10 @@ def main(argv=None) -> int:
     p.add_argument("--config", help="a .mcp.json to scan every configured server")
     p.add_argument("--name", default="server", help="label for the scanned server")
     p.add_argument("--json", action="store_true", help="emit the JSON report to stdout")
+    p.add_argument("--sarif", metavar="PATH", help="write a SARIF 2.1.0 report (GitHub Security tab)")
     a = p.parse_args(argv)
-    return run(command=a.command, args=a.args, url=a.url, config=a.config, name=a.name, json_out=a.json)
+    return run(command=a.command, args=a.args, url=a.url, config=a.config, name=a.name,
+               json_out=a.json, sarif_out=a.sarif)
 
 
 if __name__ == "__main__":

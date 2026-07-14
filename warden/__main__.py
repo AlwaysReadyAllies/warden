@@ -350,8 +350,10 @@ def main(argv=None) -> int:
     ps.add_argument("--command"); ps.add_argument("--arg", action="append", default=[], dest="args")
     ps.add_argument("--url"); ps.add_argument("--config"); ps.add_argument("--name", default="server")
     ps.add_argument("--json", action="store_true")
+    ps.add_argument("--sarif", metavar="PATH", help="write a SARIF 2.1.0 report (GitHub Security tab)")
     ps.set_defaults(func=lambda a: __import__("warden.scan_cli", fromlist=["run"]).run(
-        command=a.command, args=a.args, url=a.url, config=a.config, name=a.name, json_out=a.json))
+        command=a.command, args=a.args, url=a.url, config=a.config, name=a.name, json_out=a.json,
+        sarif_out=a.sarif))
 
     pa = sub.add_parser("audit", help="audit log tools")
     asub = pa.add_subparsers(dest="audit_cmd", required=True)
