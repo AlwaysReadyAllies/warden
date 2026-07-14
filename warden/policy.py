@@ -9,9 +9,9 @@ from typing import Any, Dict, List, Optional
 from warden.schemas import Action, Decision, ToolCall, PolicyEngine
 from warden.config import WardenConfig
 
-# SECURITY: DECISION: Precedence order is: explicit tool rule > rules[] > sensitive_actions > server default > mode.
+# SECURITY: DECISION: Precedence order is: [capability-DENY if capability_deny_overrides] > explicit tool rule > rules[] > sensitive_actions > server default > mode.
 # ALTERNATIVES: We could run payload rules before explicit tool rules, or mode before rules.
-# WHY: Explicit tool rules allow the administrator to override payload rules for specific tools that are known to accept dangerous patterns (e.g., a SQL-admin shell tool). Payload-level rules[] run next to intercept attacks in generic arguments. Sensitive actions are a broad fallback to catch actions not explicitly handled by specific tool rules. Server defaults act as local catch-alls. Global mode is the absolute last-resort fallback.
+# WHY: With capability_deny_overrides set, a capability-scoped DENY is authoritative — a coarse safety net ("no FINANCIAL/DELETE tools, ever") must not be silently allow-listed past; it is OFF by default to preserve the escape hatch below. Explicit tool rules let the administrator override payload rules for specific tools known to accept dangerous patterns (e.g., a SQL-admin shell tool). Payload-level rules[] run next to intercept attacks in generic arguments. Sensitive actions are a broad fallback to catch actions not explicitly handled by specific tool rules. Server defaults act as local catch-alls. Global mode is the absolute last-resort fallback.
 # THREAT: Privilege escalation or bypass if general rules could unexpectedly override specific admin-allowed tools, or if permissive modes overrode restricted defaults.
 
 def _contains_match(needle: Any, haystack: str) -> bool:
@@ -44,6 +44,14 @@ class WardenPolicy:
     def decide(self, call: ToolCall) -> Decision:
         """Determines the Action for a given ToolCall using the precedence rules."""
         try:
+            # 0. Authoritative capability DENY (opt-in via capability_deny_overrides): a capability-scoped
+            #    deny wins even over an explicit tool ALLOW, so a coarse capability net can't be allow-listed
+            #    past. Off by default → documented precedence (an admin may allow one vetted tool by name).
+            if getattr(self.config, "capability_deny_overrides", False):
+                cap_deny = self._check_capability_denies(call)
+                if cap_deny is not None:
+                    return cap_deny
+
             # 1. Explicit tool rule
             explicit_decision = self._check_explicit_tool_rule(call)
             if explicit_decision is not None:
@@ -205,16 +213,68 @@ class WardenPolicy:
         pat, act, rsn = matched_actions[0]
         return Decision(action=act, reason=rsn, rule_id=f"explicit_tool:{call.server}:{pat}")
 
+    def _rule_matches_request(self, call: ToolCall, match_cfg: dict) -> Optional[bool]:
+        """True/False if a REQUEST-direction rule's conditions match; None means "fail closed" (bad regex)."""
+        if str(match_cfg.get("direction", "request")).lower() != "request":
+            return False
+        cap_match = match_cfg.get("capability")
+        if cap_match is not None:
+            wanted = {str(c).upper() for c in ({cap_match} if isinstance(cap_match, str) else cap_match)}
+            have = {str(c).upper() for c in (call.capabilities or ())}
+            if not (wanted & have):
+                return False
+        contains_str = match_cfg.get("contains")
+        if contains_str is not None:
+            if not any(_contains_match(contains_str, str(v)) for v in call.args.values()):
+                return False
+        arg_regex = match_cfg.get("arg_regex")
+        if arg_regex is not None:
+            try:
+                pattern = re.compile(arg_regex)
+            except Exception:
+                return None  # malformed regex → caller fails closed
+            if not any(pattern.search(str(v)) for v in call.args.values()):
+                return False
+        return True
+
+    def _check_capability_denies(self, call: ToolCall) -> Optional[Decision]:
+        """Authoritative capability DENY (only when config.capability_deny_overrides): a capability-scoped
+        deny wins even over an explicit per-tool allow, so a coarse "no FINANCIAL/DELETE tools" net can't
+        be silently allow-listed past. Applies ONLY to rules whose match is capability-scoped and denies."""
+        for rule in self.config.rules:
+            if not isinstance(rule, dict):
+                continue
+            match_cfg = rule.get("match")
+            if not isinstance(match_cfg, dict) or "capability" not in match_cfg:
+                continue
+            try:
+                action_val = Action(rule.get("action", "deny"))
+            except ValueError:
+                action_val = Action.DENY
+            if action_val != Action.DENY:
+                continue
+            rule_id = rule.get("id", "capability_deny")
+            matched = self._rule_matches_request(call, match_cfg)
+            if matched is None:
+                return Decision(action=Action.DENY,
+                                reason=f"Regex evaluation failed on rule '{rule_id}'",
+                                rule_id=f"rule_error:{rule_id}")
+            if matched:
+                return Decision(action=Action.DENY,
+                                reason=rule.get("reason", f"Capability deny (authoritative): {rule_id}"),
+                                rule_id=rule_id)
+        return None
+
     def _check_rules(self, call: ToolCall) -> Optional[Decision]:
         for rule in self.config.rules:
             if not isinstance(rule, dict):
                 continue
-            
+
             rule_id = rule.get("id", "rule")
             match_cfg = rule.get("match")
             if not match_cfg or not isinstance(match_cfg, dict):
                 continue
-            
+
             matches_all = True
 
             # Check direction (decide() only processes REQUEST direction)

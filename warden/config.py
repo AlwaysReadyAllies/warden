@@ -33,6 +33,10 @@ class WardenConfig:
     approval: Optional[Dict[str, Any]] = None
     # Optional resource-scoped authorization: {network: {domains: [...]}, filesystem: {roots: [...]}}.
     constraints: Optional[Dict[str, Any]] = None
+    # When true, a capability-scoped DENY rule is AUTHORITATIVE — it overrides even an explicit per-tool
+    # `action: allow`, so a coarse "no FINANCIAL/DELETE tools, ever" net can't be silently allow-listed
+    # past. Default false preserves the documented precedence (an admin may allow one vetted tool by name).
+    capability_deny_overrides: bool = False
 
     def __post_init__(self) -> None:
         # Validate mode
@@ -83,6 +87,7 @@ def load_config(path: str) -> WardenConfig:
                 flow=data.get("flow"),
                 approval=data.get("approval"),
                 constraints=data.get("constraints"),
+                capability_deny_overrides=bool(data.get("capability_deny_overrides", False)),
             )
     except Exception:
         # SECURITY: DECISION: Any parsing exception defaults to a strict config to fail closed.

@@ -2,11 +2,12 @@
 # (warden/targets/reference_target.py) so the live proof demonstrates Warden blocking real attacks
 # end-to-end over stdio.
 #
-# Least privilege: it exposes ONLY the tools it means to, each with the deterministic controls that
-# defend it. It does NOT expose delete_record at all — the surest control on a dangerous capability is
-# not to advertise it (a capability: DELETE deny would NOT protect an explicitly-allowed tool; a per-tool
-# allow is authoritative over a capability rule by design — see test_explicit_tool_rule_overrides_capability_rule).
 mode: allow
+
+# capability_deny_overrides makes a capability-scoped DENY authoritative — it wins even over the
+# per-tool `action: allow` below, so `delete_record` can be advertised yet still hard-denied by the
+# DELETE capability rule. (With this off, an explicit tool allow would override the capability deny.)
+capability_deny_overrides: true
 
 servers:
   reference:
@@ -26,7 +27,8 @@ servers:
         postconditions:
           - path: "$.status"
             equals: "completed"
-      # delete_record is intentionally NOT listed → the proxy never advertises it → it cannot be called
+      # advertised so agents can discover it, but the DELETE capability rule below denies it outright
+      delete_record: { action: allow }
 
 # resource boundaries: the only network destination and filesystem root the tools may touch
 constraints:
@@ -34,3 +36,9 @@ constraints:
     domains: ["api.internal.example"]
   filesystem:
     roots: ["/workspace"]
+
+# capability policy: deletion is denied outright (authoritative, per capability_deny_overrides)
+rules:
+  - id: deny_delete
+    match: { capability: DELETE }
+    action: deny

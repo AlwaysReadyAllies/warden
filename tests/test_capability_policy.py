@@ -46,7 +46,7 @@ def test_case_insensitive():
 
 
 def test_explicit_tool_rule_overrides_capability_rule():
-    # an admin can allow ONE known-destructive tool by name, above the capability deny
+    # DEFAULT (capability_deny_overrides off): an admin can allow ONE known-destructive tool by name
     cfg = WardenConfig(mode="allow",
                        servers={"srv": {"tools": {"safe_delete": {"action": "allow"}}}},
                        rules=DENY_DANGEROUS)
@@ -55,6 +55,28 @@ def test_explicit_tool_rule_overrides_capability_rule():
     assert p.decide(_call("safe_delete", {"DELETE"})).action == Action.ALLOW
     # but any OTHER delete tool still hits the capability deny
     assert p.decide(_call("delete_prod_db", {"DELETE"})).action == Action.DENY
+
+
+def test_capability_deny_overrides_makes_capability_deny_authoritative():
+    # opt-in: a capability DENY wins even over an explicit per-tool allow
+    cfg = WardenConfig(mode="allow",
+                       servers={"srv": {"tools": {"safe_delete": {"action": "allow"}}}},
+                       rules=DENY_DANGEROUS, capability_deny_overrides=True)
+    p = WardenPolicy(cfg)
+    d = p.decide(_call("safe_delete", {"DELETE"}))
+    assert d.action == Action.DENY
+    assert "no-dangerous" in d.rule_id
+    # a non-dangerous tool is unaffected by the override
+    assert p.decide(_call("get_weather", {"READ"})).action == Action.ALLOW
+
+
+def test_capability_deny_overrides_does_not_touch_gate_rules():
+    # only DENY rules are authoritative; a capability GATE does not override an explicit allow
+    cfg = WardenConfig(mode="allow",
+                       servers={"srv": {"tools": {"editor": {"action": "allow"}}}},
+                       rules=GATE_WRITES, capability_deny_overrides=True)
+    p = WardenPolicy(cfg)
+    assert p.decide(_call("editor", {"WRITE"})).action == Action.ALLOW
 
 
 def test_precedence_deny_before_gate_within_rules():
