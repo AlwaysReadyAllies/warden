@@ -191,7 +191,26 @@ def _cmd_prove(args) -> int:
         with open(args.html, "w", encoding="utf-8") as fh:
             fh.write(effectiveness.render_html(rep))
         sys.stderr.write(f"🛡️  control-effectiveness proof → {args.html}\n")
-    if args.json or not args.html:
+    if args.sign:
+        from . import evidence
+        seal_state = getattr(args, "seal_state", None)
+        sealer = None
+        if seal_state:
+            from .sealing import ForwardSecureSealer
+            sealer = ForwardSecureSealer(seal_state)
+            if not sealer.is_setup:
+                sys.stderr.write(f"❌ seal state {seal_state} not initialised — run `warden audit setup-keys`\n")
+                return 2
+        audit = AuditLog(args.sign, sealer=sealer)
+        cert = evidence.anchor_report(audit, "control_effectiveness", rep,
+                                      evidence.effectiveness_summary(rep))
+        if args.cert:
+            with open(args.cert, "w", encoding="utf-8") as fh:
+                fh.write(json.dumps(cert, indent=2))
+            sys.stderr.write(f"🔏 signed certificate → {args.cert} (anchored at seq {cert['audit']['seq']})\n")
+        else:
+            print(json.dumps(cert, indent=2))
+    if args.json or not (args.html or args.sign):
         print(json.dumps(rep, indent=2))
     sys.stderr.write(f"{rep['held']}/{rep['total']} attacks blocked ({rep['coverage_pct']}%); "
                      f"{rep['leaked']} leaked\n")
@@ -306,6 +325,10 @@ def main(argv=None) -> int:
     ppv.add_argument("--config", default="warden.yaml")
     ppv.add_argument("--html", help="write a self-contained proof report to this path")
     ppv.add_argument("--json", action="store_true", help="also print the JSON report")
+    ppv.add_argument("--sign", metavar="AUDIT_LOG",
+                     help="anchor the proof into this hash-chained audit log (tamper-evident evidence)")
+    ppv.add_argument("--seal-state", help="forward-secure sealer state to make the anchor sealed (with --sign)")
+    ppv.add_argument("--cert", help="write the verifiable evidence certificate to this path (with --sign)")
     ppv.set_defaults(func=_cmd_prove)
 
     ps = sub.add_parser("scan", help="audit an MCP server's tools for risk before you trust it (mcp-scan)")
