@@ -154,6 +154,26 @@ warden scan --config .mcp.json --json                    # same, as a warden sub
 It reuses Warden's own guard corpus, pin fingerprints, and dataflow taxonomy — the static half of the
 same engine. (Fills the gap left when Invariant's `mcp-scan` was acquired and closed.)
 
+## `warden prove` — prove the controls actually block attacks
+
+`scan` says what a server *could* do and `report` says what controls are *configured*; **`prove` shows
+what they *actually block***. It runs a suite of deterministic attacks (SSRF, path traversal, command
+& SQL injection, secret egress, capability escalation) — partly derived from *your* config — through the
+exact interceptor that runs in production, and reports per attack whether the control held. Exit 2 if any
+attack leaks, so it gates CI.
+
+```bash
+warden prove --config warden.yaml --html effectiveness.html         # in-process, config-derived
+warden prove --live --config warden.yaml --html live_proof.html     # end-to-end: real client → proxy → real server, over stdio
+warden prove --config warden.yaml --sign warden_audit.jsonl --cert cert.json   # tamper-evident evidence
+```
+
+`--live` fronts a real downstream through the real proxy and generates attacks from its live tool
+schemas — proving a block happens on the wire, not just in a unit test. `--sign` anchors the proof into
+the hash-chained audit log and emits a certificate binding the report's `sha256` to its chain position,
+so the evidence can't be edited after the fact. See **[docs/CONTROLS.md](docs/CONTROLS.md)** for the full
+control set, policy precedence (incl. `capability_deny_overrides`), and the config schema.
+
 ## Why it's trustworthy
 
 - **Tamper-evident audit** — hash-chained JSONL; `warden audit verify` detects any edit/insert/delete.
@@ -175,7 +195,18 @@ warden/
   schemas.py      shared contract (closed-enum decisions, hash-by-default audit)
   proxy.py        MCP upstream server + downstream clients + namespacing + pin check
   interceptor.py  the policy→audit→approval→guard pipeline (+ REDACT + result rules)
-  policy.py       YAML → allow/deny/gate/redact/redact_and_flag (request + result direction)
+  policy.py       YAML → allow/deny/gate/redact/redact_and_flag (+ capability rules, capability_deny_overrides)
+  runtime.py      single source of control wiring — build_interceptor (production == proof)
+  capabilities.py tool → capability set (READ/WRITE/DELETE/EXECUTE/NETWORK/CREDENTIAL/FINANCIAL/ADMIN)
+  capsnapshot.py  capability baseline snapshot + CI expansion gate (warden capabilities)
+  boundaries.py   network-domain / filesystem-root allowlists (resource boundaries)
+  argconstraints.py  typed per-argument value constraints (type/enum/min-max/pattern/email_domain)
+  postconditions.py  declarative result invariants — Verify-Then-Commit
+  effectiveness.py   in-process control-effectiveness proof (warden prove)
+  liveprove.py    over-the-wire proof — real client→proxy→server, schema-derived attacks (--live)
+  evidence.py     anchor a proof into the hash chain → verifiable certificate (--sign)
+  report.py       governance-posture + audit-summary evidence report (warden report)
+  targets/        deliberately-vulnerable reference MCP server (the --live target)
   guard.py        prompt-injection corpus + secret/PII + shell/SQL/path detection
   audit.py        hash-chained tamper-evident log + verify (+ forward-secure seals)
   sealing.py      forward-secure sealing + external anchoring (hostile-operator defense)
