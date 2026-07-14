@@ -188,7 +188,8 @@ def run_effectiveness(cfg: Any, suite: list[AttackCase] | None = None) -> dict:
         "total": total,
         "held": blocked_n,
         "leaked": total - blocked_n,
-        "coverage_pct": round(100.0 * blocked_n / total, 1) if total else 100.0,
+        # None (not 100) on an empty suite: 0 attacks proves NOTHING — never read as full coverage
+        "coverage_pct": round(100.0 * blocked_n / total, 1) if total else None,
         "by_control": by_control,
         "cases": cases,
     }
@@ -214,8 +215,12 @@ def render_html(report: dict) -> str:
         for k, v in sorted(report["by_control"].items())
     )
     leaked = report["leaked"]
-    verdict_cls = "bad" if leaked else "ok"
-    verdict_txt = f"{leaked} attack(s) leaked" if leaked else "all attacks blocked"
+    if report["total"] == 0:
+        verdict_cls, verdict_txt, cov_txt = "bad", "no attacks generated — nothing was verified", "n/a"
+    else:
+        verdict_cls = "bad" if leaked else "ok"
+        verdict_txt = f"{leaked} attack(s) leaked" if leaked else "all attacks blocked"
+        cov_txt = f"{report['coverage_pct']}%"
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Warden — Control-Effectiveness Proof</title>
@@ -238,7 +243,7 @@ def render_html(report: dict) -> str:
 </style></head><body>
   <h1>Warden — Control-Effectiveness Proof</h1>
   <p class="muted">Deterministic closed-loop proof · schema {SCHEMA}</p>
-  <p class="score {verdict_cls}">{report['coverage_pct']}%</p>
+  <p class="score {verdict_cls}">{cov_txt}</p>
   <p class="{verdict_cls}">{report['held']}/{report['total']} attacks blocked — {verdict_txt}</p>
   <h2>By control</h2>
   <table><thead><tr><th>control</th><th>attacks</th><th>held</th><th>leaked</th></tr></thead>

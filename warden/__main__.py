@@ -216,8 +216,16 @@ def _cmd_prove(args) -> int:
             print(json.dumps(cert, indent=2))
     if args.json or not (args.html or args.sign):
         print(json.dumps(rep, indent=2))
-    sys.stderr.write(f"{rep['held']}/{rep['total']} attacks blocked ({rep['coverage_pct']}%); "
+    cov = rep["coverage_pct"]
+    sys.stderr.write(f"{rep['held']}/{rep['total']} attacks blocked "
+                     f"({cov if cov is not None else 'n/a'}{'%' if cov is not None else ''}); "
                      f"{rep['leaked']} leaked\n")
+    if rep["total"] == 0:
+        # 0 attacks == nothing proven. Never let an empty proof read as a pass (it's the exact
+        # false-confidence this feature exists to kill): fail loudly so a CI gate can't be fooled.
+        sys.stderr.write("⚠️  NO attacks were generated — this config declares no controls Warden can "
+                         "prove. Nothing was verified; this is NOT a pass.\n")
+        return 2
     return 2 if rep["leaked"] else 0  # a leak fails the build
 
 

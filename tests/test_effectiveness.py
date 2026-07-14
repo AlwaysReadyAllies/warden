@@ -58,6 +58,17 @@ def test_leak_is_detected_and_reported():
     assert rep["cases"][0]["verdict"] == "LEAKED"
 
 
+def test_empty_suite_is_not_reported_as_full_coverage():
+    # 0 attacks proves NOTHING — it must NOT read as 100% (the false-confidence anti-pattern).
+    cfg = WardenConfig(mode="allow", servers={"s": {"tools": {}}})
+    rep = E.run_effectiveness(cfg, suite=[])
+    assert rep["total"] == 0
+    assert rep["coverage_pct"] is None          # NOT 100.0
+    assert rep["leaked"] == 0
+    # and the HTML says so rather than "all attacks blocked"
+    assert "nothing was verified" in E.render_html(rep).lower()
+
+
 def test_render_html_self_contained():
     rep = E.run_effectiveness(_cfg())
     out = E.render_html(rep)

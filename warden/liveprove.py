@@ -170,7 +170,8 @@ def _assemble(cases: list[dict], target: str) -> dict:
     return {
         "schema": SCHEMA, "mode": "live", "target": target,
         "total": total, "held": held, "leaked": total - held,
-        "coverage_pct": round(100.0 * held / total, 1) if total else 100.0,
+        # None (not 100) on an empty suite: 0 attacks proves NOTHING — never read as full coverage
+        "coverage_pct": round(100.0 * held / total, 1) if total else None,
         "by_control": by_control, "cases": cases,
     }
 
