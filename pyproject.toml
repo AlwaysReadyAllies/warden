@@ -1,6 +1,6 @@
 [project]
 name = "warden-mcp"
-version = "0.2.0"
+version = "0.2.1"
 description = "Drop-in MCP security middleware: audit · policy · human-approval · injection defense"
 readme = "README.md"
 requires-python = ">=3.10"
