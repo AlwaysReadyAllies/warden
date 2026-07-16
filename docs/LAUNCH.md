@@ -53,13 +53,21 @@ uvx warden-mcp init && uvx warden-mcp run
 >   first, so the obvious evasions don't work) and redacts leaked secrets (provider keys, JWTs, private
 >   keys, PII). Hard-denies `rm -rf` / `DROP TABLE` style payloads in args even if policy allows the tool.
 > - **Tamper-evident audit**: hash-chained JSONL; `warden audit verify` catches any edit/insert/delete.
+>   Optional forward-secure sealing makes a rewrite detectable even by a privileged local operator — the
+>   key that sealed a record is ratcheted forward and destroyed, so past records can't be forged after a
+>   compromise.
+> - **Capability policy**: decide on *what a tool can do* (read/write/exec/network/…), not its name — so a
+>   renamed or shadowed tool can't slip past a name-based rule.
+> - **It proves itself**: `warden prove` fires a CWE-grounded attack suite through the real proxy and
+>   records, per attack, whether the control actually held — anchored into the audit chain as a
+>   verifiable certificate. If it can't verify a control, it fails loudly rather than reporting a false pass.
 >
 > It's local-first and makes zero network calls of its own (it sees all tool traffic — it must not become
-> an exfil path). ~1.4 ms overhead per call.
+> an exfil path). ~1.4 ms overhead per call. There's also a static companion, `mcp-scan`, that audits a
+> server's tool definitions before you ever connect.
 >
-> Honest about limits: the audit chain detects edit-without-rechain; a privileged local attacker who can
-> rewrite the whole file needs head-hash anchoring (operational) or signed records (v2 roadmap). The
-> injection corpus is ongoing work — that's the part I most want adversarial eyes on.
+> Honest about limits: the injection corpus is ongoing work — that's the part I most want adversarial eyes
+> on. And regex/normalization-based injection stripping is inherently a moving target, not a solved problem.
 >
 > Try it: `uvx warden-mcp init && uvx warden-mcp run`, or run `examples/hero_demo.py` to watch it block
 > a destructive call, redact a leaked key, and catch a forged audit record. Apache-2.0. Feedback / new
